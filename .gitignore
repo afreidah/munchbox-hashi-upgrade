@@ -1,0 +1,16 @@
+hashi-upgrade
+build/
+dist/
+bin/
+*.test
+*.out
+coverage.html
+*.swp
+.DS_Store
+.idea/
+.vscode/
+.claude/
+
+# Generated plans land in the working directory by design; they record cluster
+# topology and are per-run state, not source.
+*-upgrade-*.yaml
