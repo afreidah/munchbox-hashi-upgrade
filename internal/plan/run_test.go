@@ -21,7 +21,7 @@ import (
 func tasks(ids ...string) []plan.Task {
 	out := make([]plan.Task, 0, len(ids))
 	for _, id := range ids {
-		out = append(out, plan.Task{ID: id, Stage: plan.StageRaft})
+		out = append(out, plan.Task{ID: id, Stage: plan.StageServers})
 	}
 	return out
 }
@@ -247,44 +247,44 @@ func TestRunSettle_OnRunWithoutProgressMap(t *testing.T) {
 
 func TestClusterOfKind(t *testing.T) {
 	c := plan.Cluster{Members: []plan.Member{
-		{Name: "a", Kind: plan.KindRaft},
-		{Name: "b", Kind: plan.KindWorker},
-		{Name: "c", Kind: plan.KindRaft},
+		{Name: "a", Kind: plan.KindServer},
+		{Name: "b", Kind: plan.KindClient},
+		{Name: "c", Kind: plan.KindServer},
 	}}
 
-	raft := c.OfKind(plan.KindRaft)
+	raft := c.OfKind(plan.KindServer)
 	if len(raft) != 2 || raft[0].Name != "a" || raft[1].Name != "c" {
 		t.Errorf("OfKind(raft) = %v, want a and c in survey order", raft)
 	}
 
-	workers := c.OfKind(plan.KindWorker)
+	workers := c.OfKind(plan.KindClient)
 	if len(workers) != 1 || workers[0].Name != "b" {
 		t.Errorf("OfKind(worker) = %v, want b", workers)
 	}
 
-	if got := (plan.Cluster{}).OfKind(plan.KindRaft); got != nil {
+	if got := (plan.Cluster{}).OfKind(plan.KindServer); got != nil {
 		t.Errorf("OfKind on an empty survey = %v, want nil", got)
 	}
 }
 
 func TestClusterLeader(t *testing.T) {
 	c := plan.Cluster{Members: []plan.Member{
-		{Name: "a", Kind: plan.KindRaft},
-		{Name: "b", Kind: plan.KindRaft, Leading: true},
+		{Name: "a", Kind: plan.KindServer},
+		{Name: "b", Kind: plan.KindServer, Primary: true},
 	}}
 
-	leader, ok := c.Leader()
+	leader, ok := c.Primary()
 	if !ok || leader.Name != "b" {
-		t.Errorf("Leader() = %v, %v; want b, true", leader, ok)
+		t.Errorf("Primary() = %v, %v; want b, true", leader, ok)
 	}
 }
 
 // A survey taken during an election has no leader, which the caller has to be
 // able to tell apart from a zero-valued member.
 func TestClusterLeader_None(t *testing.T) {
-	c := plan.Cluster{Members: []plan.Member{{Name: "a", Kind: plan.KindRaft}}}
+	c := plan.Cluster{Members: []plan.Member{{Name: "a", Kind: plan.KindServer}}}
 
-	if _, ok := c.Leader(); ok {
-		t.Error("Leader() reported one during an election, want false")
+	if _, ok := c.Primary(); ok {
+		t.Error("Primary() reported one during an election, want false")
 	}
 }
