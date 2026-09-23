@@ -46,7 +46,7 @@ func (t Tool) Known() bool {
 //
 // From records the pin as it stood when the run was generated, so a run states
 // the change it represents and a resumed one cannot quietly become a different
-// upgrade. Drain empties a worker before restarting it and is off by default:
+// upgrade. Drain empties a client before restarting it and is off by default:
 // restarting an agent does not stop its workloads, so draining relocates the
 // whole cluster to avoid a disruption that does not occur.
 type Spec struct {
@@ -62,44 +62,51 @@ type Spec struct {
 
 // Kind is what a host is to the cluster.
 //
-// A host in the raft is KindRaft even when it also runs workloads: it holds
-// one binary and one service, so it is upgraded once, with the raft members.
-// Counting it among the workers as well would restart a raft member a second
-// time and spend the cluster's fault tolerance twice for one host.
+// A host that participates in coordination is KindServer even when it also
+// accepts work: it holds one binary and one service, so it is upgraded once,
+// with the servers. Counting it among the clients as well would restart a
+// coordinating host twice and spend the cluster's fault tolerance twice for
+// one host.
 type Kind string
 
 const (
-	KindRaft   Kind = "raft"
-	KindWorker Kind = "worker"
+	KindServer Kind = "server"
+	KindClient Kind = "client"
 )
 
 // Member is one host as the survey found it.
 //
-// Addr is the join key between the raft and worker views of a cluster, which
-// disagree on name shape and do not both list every host.
+// Addr is what the server and client views of a cluster are reconciled on;
+// they disagree on name shape and do not both list every host.
 //
-// Workloads is what the member was running when it was surveyed. Comparing it
-// after a restart separates an agent that reattached to its workloads from one
-// that was gone long enough for them to be rescheduled elsewhere, which no
-// other check distinguishes. Labels is carried verbatim so the run records the
-// values an order was derived from.
+// Primary is the leader, or whatever the tool calls the one host that
+// coordinates. Voter is false for a tool whose coordination does not run on
+// its own quorum. Status is recorded in the tool's own vocabulary rather than
+// normalised, because collapsing three health vocabularies into one is an
+// interpretation, and the survey observes.
 type Member struct {
-	ID        string
-	Name      string
-	Addr      string
-	Kind      Kind
-	Version   string
-	Leading   bool              `yaml:",omitempty"`
-	Voting    bool              `yaml:",omitempty"`
-	Workloads []string          `yaml:",omitempty"`
-	Labels    map[string]string `yaml:",omitempty"`
+	ID      string
+	Name    string
+	Addr    string
+	Kind    Kind
+	Version string
+	Status  string            `yaml:",omitempty"`
+	Primary bool              `yaml:",omitempty"`
+	Voter   bool              `yaml:",omitempty"`
+	Labels  map[string]string `yaml:",omitempty"`
 }
 
 // Cluster is the fleet as it was when the run was generated. It travels with
 // the tasks so a run can be reviewed, resumed or handed on without re-querying
 // a cluster that has since moved.
+//
+// Tolerance is how many servers the cluster could lose without losing
+// coordination, as the cluster itself reports it rather than as arithmetic on
+// a voter count. A tool whose coordination does not run on its own quorum
+// reports zero.
 type Cluster struct {
 	SurveyedAt time.Time `yaml:"surveyed_at"`
+	Tolerance  int
 	Members    []Member
 }
 
@@ -114,11 +121,11 @@ func (c Cluster) OfKind(k Kind) []Member {
 	return out
 }
 
-// Leader returns the raft leader, and whether the survey found one. A survey
-// taken during an election legitimately has none.
-func (c Cluster) Leader() (Member, bool) {
+// Primary returns the coordinating member, and whether the survey found one. A
+// survey taken during an election legitimately has none.
+func (c Cluster) Primary() (Member, bool) {
 	for _, m := range c.Members {
-		if m.Leading {
+		if m.Primary {
 			return m, true
 		}
 	}
@@ -130,23 +137,23 @@ func (c Cluster) Leader() (Member, bool) {
 // -------------------------------------------------------------------------
 
 // Stage groups tasks by the part of the run they belong to. Stages run in the
-// order declared here and a run never interleaves them: every raft member is
-// upgraded before the first worker, because a cluster tolerates its servers
+// order declared here and a run never interleaves them: every server is
+// upgraded before the first client, because a cluster tolerates its servers
 // ahead of its clients and not the reverse.
 type Stage string
 
 const (
 	StageSurvey  Stage = "survey"  // freeze automation, prove the cluster is fit to start
-	StageRaft    Stage = "raft"    // raft members, one at a time, leader last
-	StageWorkers Stage = "workers" // everything that is not a raft member
+	StageServers Stage = "servers" // coordinating hosts, one at a time, primary last
+	StageClients Stage = "clients" // everything that does not coordinate
 	StageVerify  Stage = "verify"  // confirm the end state, unwind what survey set up
 )
 
 // Confirm is how much an operator has to assent to a task before it runs.
 //
 // It is a property of the task rather than a decision the runner makes, so the
-// run file itself records which boundaries need a person. Restarting a worker
-// is routine; moving raft leadership is not.
+// run file itself records which boundaries need a person. Restarting a client
+// is routine; moving coordination off the primary is not.
 type Confirm string
 
 const (

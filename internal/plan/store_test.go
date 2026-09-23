@@ -34,21 +34,20 @@ func populated(path string) *plan.Run {
 			SurveyedAt: surveyed,
 			Members: []plan.Member{
 				{
-					ID: "m-1", Name: "raft-a", Addr: "10.0.0.1",
-					Kind: plan.KindRaft, Version: "2.0.5",
-					Leading: true, Voting: true,
-					Workloads: []string{"w-1", "w-2"},
-					Labels:    map[string]string{"role": "edge"},
+					ID: "m-1", Name: "server-a", Addr: "10.0.0.1",
+					Kind: plan.KindServer, Version: "2.0.5", Status: "alive",
+					Primary: true, Voter: true,
+					Labels: map[string]string{"role": "edge"},
 				},
-				{ID: "m-2", Name: "worker-a", Addr: "10.0.0.2", Kind: plan.KindWorker, Version: "2.0.5"},
+				{ID: "m-2", Name: "client-a", Addr: "10.0.0.2", Kind: plan.KindClient, Version: "2.0.5"},
 			},
 		},
 		[]plan.Task{{
-			ID:           "upgrade-raft-a",
-			Title:        "Upgrade raft-a",
-			Stage:        plan.StageRaft,
-			Member:       "raft-a",
-			Action:       plan.Action{Command: "upgrade-member", Args: map[string]any{"member": "raft-a"}},
+			ID:           "upgrade-server-a",
+			Title:        "Upgrade server-a",
+			Stage:        plan.StageServers,
+			Member:       "server-a",
+			Action:       plan.Action{Command: "upgrade-member", Args: map[string]any{"member": "server-a"}},
 			Confirm:      plan.ConfirmTyped,
 			Irreversible: true,
 			Checks:       map[string]any{"voting": true, "commits_behind": 0},
@@ -56,8 +55,8 @@ func populated(path string) *plan.Run {
 	)
 
 	started := surveyed.Add(time.Minute)
-	r.Begin("upgrade-raft-a", started)
-	r.Settle("upgrade-raft-a", plan.Succeeded, started.Add(90*time.Second), nil)
+	r.Begin("upgrade-server-a", started)
+	r.Settle("upgrade-server-a", plan.Succeeded, started.Add(90*time.Second), nil)
 	return r
 }
 
@@ -86,17 +85,17 @@ func TestSaveAndOpen_RoundTrip(t *testing.T) {
 	if task.Confirm != plan.ConfirmTyped {
 		t.Errorf("Confirm = %q, want %q", task.Confirm, plan.ConfirmTyped)
 	}
-	if got.Outcome("upgrade-raft-a") != plan.Succeeded {
-		t.Errorf("Outcome = %q, want progress to survive", got.Outcome("upgrade-raft-a"))
+	if got.Outcome("upgrade-server-a") != plan.Succeeded {
+		t.Errorf("Outcome = %q, want progress to survive", got.Outcome("upgrade-server-a"))
 	}
-	if rec := got.Progress["upgrade-raft-a"]; rec.StartedAt == nil || rec.FinishedAt == nil {
+	if rec := got.Progress["upgrade-server-a"]; rec.StartedAt == nil || rec.FinishedAt == nil {
 		t.Errorf("record timestamps lost: %+v", rec)
 	}
-	if len(got.Cluster.Members) != 2 || !got.Cluster.Members[0].Leading {
+	if len(got.Cluster.Members) != 2 || !got.Cluster.Members[0].Primary {
 		t.Errorf("Cluster did not survive: %+v", got.Cluster)
 	}
-	if len(got.Cluster.Members[0].Workloads) != 2 {
-		t.Errorf("Workloads = %v, want two entries", got.Cluster.Members[0].Workloads)
+	if got.Cluster.Members[0].Labels["role"] != "edge" {
+		t.Errorf("Labels = %v, want the survey values preserved", got.Cluster.Members[0].Labels)
 	}
 }
 
@@ -116,7 +115,7 @@ func TestOpen_BindsPath(t *testing.T) {
 		t.Errorf("Path() = %q, want %q", got.Path(), path)
 	}
 
-	got.Settle("upgrade-raft-a", plan.Failed, time.Now().UTC(), errors.New("later failure"))
+	got.Settle("upgrade-server-a", plan.Failed, time.Now().UTC(), errors.New("later failure"))
 	if err := got.Save(); err != nil {
 		t.Fatalf("Save() after Open error = %v", err)
 	}
@@ -125,7 +124,7 @@ func TestOpen_BindsPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second Open() error = %v", err)
 	}
-	if again.Outcome("upgrade-raft-a") != plan.Failed {
+	if again.Outcome("upgrade-server-a") != plan.Failed {
 		t.Error("Save() after Open did not return the run to the same file")
 	}
 }
@@ -341,7 +340,7 @@ func TestSave_RendersReadableKeys(t *testing.T) {
 func TestSave_OmitsEmptyMemberFields(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "run.yaml")
 	r := plan.Create(path, "1.2.3", plan.Spec{Tool: plan.Nomad}, plan.Cluster{
-		Members: []plan.Member{{ID: "m-1", Name: "worker-a", Kind: plan.KindWorker}},
+		Members: []plan.Member{{ID: "m-1", Name: "client-a", Kind: plan.KindClient}},
 	}, nil)
 
 	if err := r.Save(); err != nil {
@@ -355,7 +354,7 @@ func TestSave_OmitsEmptyMemberFields(t *testing.T) {
 	}
 	got := string(data)
 
-	for _, empty := range []string{"workloads: []", "labels: {}", "leading: false", "voting: false", "drain: false"} {
+	for _, empty := range []string{"status: \"\"", "labels: {}", "primary: false", "voter: false", "drain: false"} {
 		if strings.Contains(got, empty) {
 			t.Errorf("rendered run contains %q; it should be omitted when unset", empty)
 		}
