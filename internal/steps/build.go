@@ -24,28 +24,105 @@ import (
 // task so any one of them can be run on its own, which is how a run that fails
 // partway is driven by hand.
 const (
-	CommandUpgrade  = "upgrade-member"
-	CommandHandoff  = "hand-off-coordination"
-	TaskIDHandoff   = "hand-off-coordination"
-	upgradeIDPrefix = "upgrade"
+	CommandFreeze  = "freeze-converge"
+	CommandPin     = "set-version-pin"
+	CommandUpgrade = "upgrade-member"
+	CommandHandoff = "hand-off-coordination"
+	CommandVerify  = "verify-cluster"
+	CommandThaw    = "thaw-converge"
 )
+
+// Task ids for the steps that act on the fleet rather than on one host.
+const (
+	TaskIDFreeze  = "freeze-converge-timers"
+	TaskIDPin     = "set-version-pin"
+	TaskIDHandoff = "hand-off-coordination"
+	TaskIDVerify  = "verify-cluster"
+	TaskIDThaw    = "thaw-converge-timers"
+)
+
+const upgradeIDPrefix = "upgrade"
 
 // Build returns the tasks that carry out spec against cluster.
 //
-// Servers come first, one at a time, with the coordinating host last and its
-// coordination handed off in a task of its own beforehand. Clients follow, one
-// at a time. Within each group the order is by name, so one survey always
-// produces one task list.
+// The run is bracketed: the converge timers are stopped and the version pin
+// set before any host is touched, and the timers released only once the end
+// state has been confirmed. In between, servers go one at a time with the
+// coordinating host last, then clients one at a time. Within each group the
+// order is by name, so one survey always produces one task list.
+//
+// An empty cluster still gets the bracket. A run against nothing is a strange
+// thing to ask for, but silently producing no tasks would read as success.
 func Build(spec plan.Spec, cluster plan.Cluster) []plan.Task {
 	servers := sortedByName(cluster.OfKind(plan.KindServer))
 	clients := sortedByName(cluster.OfKind(plan.KindClient))
 
-	tasks := make([]plan.Task, 0, len(servers)+len(clients)+1)
+	tasks := make([]plan.Task, 0, len(servers)+len(clients)+5)
+	tasks = append(tasks, freezeTask(), pinTask(spec))
 	tasks = append(tasks, serverTasks(spec, servers)...)
 	for _, c := range clients {
 		tasks = append(tasks, upgradeTask(spec, c, plan.StageClients, plan.ConfirmNone))
 	}
-	return tasks
+	return append(tasks, verifyTask(spec), thawTask())
+}
+
+// freezeTask stops the scheduled converges fleet-wide.
+//
+// It runs before the pin is set, not after: a timer that fires between the two
+// would converge that host to the new version outside the run's order, with
+// none of its gates or health checks. The checks cover the whole fleet because
+// the task does -- one task, every node underneath -- and they include that no
+// converge is already in flight, since one that is will happily pick up the new
+// pin the moment it is written.
+func freezeTask() plan.Task {
+	return plan.Task{
+		ID:      TaskIDFreeze,
+		Title:   "Stop scheduled converges across the fleet",
+		Stage:   plan.StageSurvey,
+		Action:  plan.Action{Command: CommandFreeze},
+		Confirm: plan.ConfirmPrompt,
+		Checks:  map[string]any{"timers_stopped": true, "converge_running": false},
+	}
+}
+
+// pinTask records the version every host will converge to. Nothing installs
+// anything until a host is reached, but from here the fleet's declared version
+// is the new one, which is why the timers are stopped first.
+func pinTask(spec plan.Spec) plan.Task {
+	return plan.Task{
+		ID:      TaskIDPin,
+		Title:   fmt.Sprintf("Pin %s to %s", spec.Tool, spec.To),
+		Stage:   plan.StageSurvey,
+		Action:  plan.Action{Command: CommandPin, Args: map[string]any{"tool": string(spec.Tool), "version": spec.To}},
+		Confirm: plan.ConfirmTyped,
+		Checks:  map[string]any{"pin": spec.To},
+	}
+}
+
+// verifyTask confirms the fleet arrived where the run intended before the
+// timers are released.
+func verifyTask(spec plan.Spec) plan.Task {
+	return plan.Task{
+		ID:      TaskIDVerify,
+		Title:   fmt.Sprintf("Confirm the fleet is running %s", spec.To),
+		Stage:   plan.StageVerify,
+		Action:  plan.Action{Command: CommandVerify, Args: map[string]any{"version": spec.To}},
+		Confirm: plan.ConfirmNone,
+		Checks:  map[string]any{"version": spec.To, "healthy": true},
+	}
+}
+
+// thawTask restores the scheduled converges. It is last so nothing converges
+// on its own until the run has said the fleet is where it should be.
+func thawTask() plan.Task {
+	return plan.Task{
+		ID:      TaskIDThaw,
+		Title:   "Restore scheduled converges across the fleet",
+		Stage:   plan.StageVerify,
+		Action:  plan.Action{Command: CommandThaw},
+		Confirm: plan.ConfirmNone,
+		Checks:  map[string]any{"timers_stopped": false},
+	}
 }
 
 // serverTasks orders the coordinating hosts: every other server first, then
