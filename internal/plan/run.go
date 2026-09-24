@@ -51,7 +51,7 @@ func (t Tool) Known() bool {
 // whole cluster to avoid a disruption that does not occur.
 type Spec struct {
 	Tool  Tool
-	From  string
+	From  string `yaml:",omitempty"`
 	To    string
 	Drain bool `yaml:",omitempty"`
 }
@@ -100,11 +100,16 @@ type Member struct {
 // the tasks so a run can be reviewed, resumed or handed on without re-querying
 // a cluster that has since moved.
 //
+// Name is what the cluster calls itself, read from the cluster rather than
+// configured here. Empty when the cluster does not publish one, which is not
+// an error: it only costs the run a nicer filename.
+//
 // Tolerance is how many servers the cluster could lose without losing
 // coordination, as the cluster itself reports it rather than as arithmetic on
 // a voter count. A tool whose coordination does not run on its own quorum
 // reports zero.
 type Cluster struct {
+	Name       string    `yaml:",omitempty"`
 	SurveyedAt time.Time `yaml:"surveyed_at"`
 	Tolerance  int
 	Members    []Member

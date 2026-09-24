@@ -25,19 +25,35 @@ import (
 )
 
 const (
-	healthPath = "/v1/operator/autopilot/health"
-	nodesPath  = "/v1/nodes"
+	healthPath   = "/v1/operator/autopilot/health"
+	nodesPath    = "/v1/nodes"
+	identityPath = "/v1/var/cluster/identity"
 )
 
-// cluster stands in for a Nomad cluster, answering the two endpoints a survey
+// cluster stands in for a Nomad cluster, answering the endpoints a survey
 // reads and failing whichever ones the test names.
 func cluster(t *testing.T, fail ...string) *nomad.Nomad {
+	t.Helper()
+	return newCluster(t, fail, nil)
+}
+
+// unnamedCluster answers every read but has never been given a name.
+func unnamedCluster(t *testing.T) *nomad.Nomad {
+	t.Helper()
+	return newCluster(t, nil, []string{identityPath})
+}
+
+func newCluster(t *testing.T, fail, absent []string) *nomad.Nomad {
 	t.Helper()
 
 	mux := http.NewServeMux()
 	broken := make(map[string]bool, len(fail))
 	for _, p := range fail {
 		broken[p] = true
+	}
+	unnamed := make(map[string]bool, len(absent))
+	for _, p := range absent {
+		unnamed[p] = true
 	}
 
 	mux.HandleFunc(healthPath, func(w http.ResponseWriter, _ *http.Request) {
@@ -61,6 +77,23 @@ func cluster(t *testing.T, fail ...string) *nomad.Nomad {
 		writeJSON(t, w, []api.NodeListStub{
 			{ID: "n-1", Name: "bravo", Address: "10.0.0.2", Version: "2.0.5", Status: "ready"},
 		})
+	})
+
+	// A cluster that has never been named answers 404 here, which is the case
+	// Peek exists to make ordinary rather than exceptional.
+	mux.HandleFunc(identityPath, func(w http.ResponseWriter, _ *http.Request) {
+		switch {
+		case broken[identityPath]:
+			http.Error(w, "variables unavailable", http.StatusInternalServerError)
+		case unnamed[identityPath]:
+			http.NotFound(w, nil)
+		default:
+			writeJSON(t, w, api.Variable{
+				Namespace: "default",
+				Path:      "cluster/identity",
+				Items:     api.VariableItems{"name": "example-cluster"},
+			})
+		}
 	})
 
 	server := httptest.NewServer(mux)
@@ -102,6 +135,25 @@ func TestSurvey(t *testing.T) {
 	if got.SurveyedAt.IsZero() {
 		t.Error("SurveyedAt was not stamped")
 	}
+	if got.Name != "example-cluster" {
+		t.Errorf("Name = %q, want the cluster's published name", got.Name)
+	}
+}
+
+// A cluster that has never been named surveys fine and goes unnamed. Peek
+// returns nothing rather than an error for a variable that was never set, and
+// a missing name costs the run only a plainer filename.
+func TestSurvey_UnnamedCluster(t *testing.T) {
+	got, err := unnamedCluster(t).Survey(t.Context())
+	if err != nil {
+		t.Fatalf("Survey() error = %v, want an unnamed cluster to survey cleanly", err)
+	}
+	if got.Name != "" {
+		t.Errorf("Name = %q, want empty", got.Name)
+	}
+	if len(got.Members) != 2 {
+		t.Errorf("members = %d, want the survey to proceed regardless", len(got.Members))
+	}
 }
 
 // Each read names itself when it fails, so an operator is told which half of
@@ -114,6 +166,7 @@ func TestSurvey_ReportsWhichReadFailed(t *testing.T) {
 	}{
 		{name: "server health", fail: healthPath, want: "read server health"},
 		{name: "node list", fail: nodesPath, want: "list nodes"},
+		{name: "cluster identity", fail: identityPath, want: "read cluster/identity"},
 	}
 
 	for _, tc := range cases {
