@@ -62,15 +62,62 @@ func TestBuild_Sequence(t *testing.T) {
 	))
 
 	want := []string{
+		steps.TaskIDFreeze,
+		steps.TaskIDPin,
 		"upgrade-bravo",
 		"upgrade-delta",
 		steps.TaskIDHandoff,
 		"upgrade-charlie",
 		"upgrade-alpha",
 		"upgrade-zulu",
+		steps.TaskIDVerify,
+		steps.TaskIDThaw,
 	}
 	if !slices.Equal(ids(got), want) {
 		t.Errorf("order =\n  %v\nwant\n  %v", ids(got), want)
+	}
+}
+
+// The pin is set only once the timers are stopped. A converge firing between
+// the two would take a host to the new version outside the run's order.
+func TestBuild_FreezePrecedesThePin(t *testing.T) {
+	got := ids(steps.Build(spec, cluster(server("alpha", true))))
+
+	freeze := slices.Index(got, steps.TaskIDFreeze)
+	pin := slices.Index(got, steps.TaskIDPin)
+	if freeze < 0 || pin < 0 {
+		t.Fatalf("tasks = %v, want both a freeze and a pin", got)
+	}
+	if freeze > pin {
+		t.Errorf("freeze at %d, pin at %d; the timers stop first", freeze, pin)
+	}
+}
+
+// Nothing converges on its own until the run has said the fleet arrived, so
+// the thaw is last and the verification precedes it.
+func TestBuild_ThawIsLastAndFollowsVerification(t *testing.T) {
+	got := ids(steps.Build(spec, cluster(server("alpha", true), client("bravo"))))
+
+	if got[len(got)-1] != steps.TaskIDThaw {
+		t.Errorf("last task = %q, want %q", got[len(got)-1], steps.TaskIDThaw)
+	}
+	if slices.Index(got, steps.TaskIDVerify) > slices.Index(got, steps.TaskIDThaw) {
+		t.Error("verification runs after the thaw; it must precede it")
+	}
+}
+
+// Every host is touched between the pin and the verification, so neither
+// bracket can be read as covering only part of the fleet.
+func TestBuild_HostsSitBetweenThePinAndTheVerification(t *testing.T) {
+	got := ids(steps.Build(spec, cluster(server("alpha", true), client("bravo"))))
+
+	pin := slices.Index(got, steps.TaskIDPin)
+	verify := slices.Index(got, steps.TaskIDVerify)
+	for _, id := range []string{"upgrade-alpha", "upgrade-bravo", steps.TaskIDHandoff} {
+		at := slices.Index(got, id)
+		if at < pin || at > verify {
+			t.Errorf("%s at %d, outside the pin (%d) and verification (%d)", id, at, pin, verify)
+		}
 	}
 }
 
@@ -83,9 +130,9 @@ func TestBuild_EmitsATaskPerHost(t *testing.T) {
 		client("charlie"),
 	))
 
-	// Three hosts plus the handoff.
-	if len(got) != 4 {
-		t.Fatalf("tasks = %v, want one per host plus the handoff", ids(got))
+	// Three hosts, the handoff, and the four bracket tasks.
+	if len(got) != 8 {
+		t.Fatalf("tasks = %v, want one per host plus the handoff and the bracket", ids(got))
 	}
 }
 
@@ -137,7 +184,11 @@ func TestBuild_HandoffNamesNoDestination(t *testing.T) {
 func TestBuild_SingleServerStillHandsOff(t *testing.T) {
 	got := steps.Build(spec, cluster(server("alone", true)))
 
-	want := []string{steps.TaskIDHandoff, "upgrade-alone"}
+	want := []string{
+		steps.TaskIDFreeze, steps.TaskIDPin,
+		steps.TaskIDHandoff, "upgrade-alone",
+		steps.TaskIDVerify, steps.TaskIDThaw,
+	}
 	if !slices.Equal(ids(got), want) {
 		t.Errorf("tasks = %v, want %v", ids(got), want)
 	}
@@ -148,7 +199,14 @@ func TestBuild_SingleServerStillHandsOff(t *testing.T) {
 func TestBuild_NoPrimaryEmitsNoHandoff(t *testing.T) {
 	got := steps.Build(spec, cluster(server("alpha", false), server("bravo", false)))
 
-	want := []string{"upgrade-alpha", "upgrade-bravo"}
+	if slices.Contains(ids(got), steps.TaskIDHandoff) {
+		t.Errorf("tasks = %v, want no handoff when nothing is coordinating", ids(got))
+	}
+	want := []string{
+		steps.TaskIDFreeze, steps.TaskIDPin,
+		"upgrade-alpha", "upgrade-bravo",
+		steps.TaskIDVerify, steps.TaskIDThaw,
+	}
 	if !slices.Equal(ids(got), want) {
 		t.Errorf("tasks = %v, want %v", ids(got), want)
 	}
@@ -157,30 +215,41 @@ func TestBuild_NoPrimaryEmitsNoHandoff(t *testing.T) {
 func TestBuild_ClientsOnly(t *testing.T) {
 	got := steps.Build(spec, cluster(client("bravo"), client("alpha")))
 
-	want := []string{"upgrade-alpha", "upgrade-bravo"}
+	want := []string{
+		steps.TaskIDFreeze, steps.TaskIDPin,
+		"upgrade-alpha", "upgrade-bravo",
+		steps.TaskIDVerify, steps.TaskIDThaw,
+	}
 	if !slices.Equal(ids(got), want) {
 		t.Errorf("tasks = %v, want %v", ids(got), want)
 	}
 }
 
-func TestBuild_EmptyCluster(t *testing.T) {
-	if got := steps.Build(spec, cluster()); len(got) != 0 {
-		t.Errorf("tasks = %v, want none", ids(got))
+// A run against nothing still brackets itself. Producing an empty task list
+// would read as a successful run rather than as a survey that found no hosts.
+func TestBuild_EmptyClusterStillBrackets(t *testing.T) {
+	got := steps.Build(spec, cluster())
+
+	want := []string{steps.TaskIDFreeze, steps.TaskIDPin, steps.TaskIDVerify, steps.TaskIDThaw}
+	if !slices.Equal(ids(got), want) {
+		t.Errorf("tasks = %v, want %v", ids(got), want)
 	}
 }
 
-// Only the first server restart commits the run: before it, abandoning costs
-// nothing.
-func TestBuild_FirstServerTaskIsIrreversible(t *testing.T) {
+// Only the first server restart commits the run. Stopping the timers and
+// changing the pin come first and are both undoable without having touched a
+// host, so neither marks the point of no return.
+func TestBuild_FirstServerRestartIsIrreversible(t *testing.T) {
 	got := steps.Build(spec, cluster(server("alpha", false), server("bravo", true), client("charlie")))
 
-	if !got[0].Irreversible {
-		t.Errorf("first task %q is not marked irreversible", got[0].ID)
-	}
-	for _, task := range got[1:] {
+	marked := make([]string, 0, 1)
+	for _, task := range got {
 		if task.Irreversible {
-			t.Errorf("task %q also marked irreversible; only the first restart commits the run", task.ID)
+			marked = append(marked, task.ID)
 		}
+	}
+	if !slices.Equal(marked, []string{"upgrade-alpha"}) {
+		t.Errorf("irreversible = %v, want only the first server restart", marked)
 	}
 }
 
