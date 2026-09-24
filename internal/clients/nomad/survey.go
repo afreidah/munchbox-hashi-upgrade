@@ -28,6 +28,15 @@ import (
 	"github.com/afreidah/munchbox-hashi-upgrade/internal/plan"
 )
 
+// Where a cluster publishes what it calls itself. A Nomad variable rather than
+// node metadata, because metadata exists only on hosts that accept work: a
+// server that accepts none carries none, and an identifier some hosts lack is
+// not an identifier.
+const (
+	identityPath = "cluster/identity"
+	identityItem = "name"
+)
+
 // Survey reads the cluster and returns the snapshot a run is generated
 // against.
 func (n *Nomad) Survey(ctx context.Context) (plan.Cluster, error) {
@@ -43,7 +52,34 @@ func (n *Nomad) Survey(ctx context.Context) (plan.Cluster, error) {
 		return plan.Cluster{}, fmt.Errorf("list nodes from %s: %w", n.Address(), err)
 	}
 
-	return assemble(health, stubs, time.Now().UTC()), nil
+	name, err := n.clusterName(ctx)
+	if err != nil {
+		return plan.Cluster{}, err
+	}
+
+	cluster := assemble(health, stubs, time.Now().UTC())
+	cluster.Name = name
+	return cluster, nil
+}
+
+// clusterName reads what the cluster calls itself, or empty when it publishes
+// nothing.
+//
+// Peek is deliberate: a variable that has never been set comes back nil rather
+// than as an error, so a cluster that has not been given a name surveys fine
+// and simply goes unnamed. A genuine failure -- unreachable, or a token
+// without read on the path -- still surfaces.
+func (n *Nomad) clusterName(ctx context.Context) (string, error) {
+	q := (&api.QueryOptions{}).WithContext(ctx)
+
+	v, _, err := n.client.Variables().Peek(identityPath, q)
+	if err != nil {
+		return "", fmt.Errorf("read %s from %s: %w", identityPath, n.Address(), err)
+	}
+	if v == nil {
+		return "", nil
+	}
+	return v.Items[identityItem], nil
 }
 
 // assemble turns the two reads into a snapshot. Separate from Survey and free
