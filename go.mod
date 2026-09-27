@@ -9,6 +9,7 @@ require (
 )
 
 require (
+	github.com/cinc-project/cinc-api v0.15.1 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
