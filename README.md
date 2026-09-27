@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logo.png" alt="Munchbox" width="160">
+</p>
+
 # munchbox-hashi-upgrade
 
 Rolling upgrades for Nomad, Consul and Vault.
