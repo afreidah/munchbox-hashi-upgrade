@@ -141,6 +141,65 @@ func TestAssemble_ClientsCarryStatusNotCoordination(t *testing.T) {
 	}
 }
 
+// Autopilot's verdict travels as it is given, along with when it was reached.
+// The gates that run between steps compare that time against the restart to
+// tell a host that has come back from one that has not gone down yet, so a
+// survey that dropped it would leave them nothing to compare.
+func TestAssemble_ServersCarryAutopilotsVerdict(t *testing.T) {
+	stable := surveyedAt.Add(-10 * time.Minute)
+	health := &api.OperatorHealthReply{
+		Healthy: true,
+		Servers: []api.ServerHealth{
+			{ID: "s-1", Name: "alpha.global", Address: "10.0.0.1:4647", Healthy: true, StableSince: stable},
+			{ID: "s-2", Name: "bravo.global", Address: "10.0.0.2:4647"},
+		},
+	}
+
+	got := assemble(health, nil, surveyedAt)
+
+	if !got.Healthy {
+		t.Error("Healthy = false, want the reply's own verdict on the cluster")
+	}
+
+	alpha := byName(t, got, "alpha")
+	if !alpha.Healthy {
+		t.Error("alpha Healthy = false, want autopilot's verdict")
+	}
+	if !alpha.StableSince.Equal(stable) {
+		t.Errorf("alpha StableSince = %v, want %v", alpha.StableSince, stable)
+	}
+
+	if bravo := byName(t, got, "bravo"); bravo.Healthy {
+		t.Error("bravo reported healthy; autopilot did not say so")
+	}
+}
+
+// A client has no autopilot verdict, so its status is what stands in for one.
+// The gates read the normalised field, which keeps Nomad's vocabulary in this
+// package.
+func TestAssemble_ClientsNormaliseReadyAndEligible(t *testing.T) {
+	stubs := []*api.NodeListStub{
+		{ID: "n-1", Name: "fit", Address: "10.0.0.5", Status: api.NodeStatusReady, SchedulingEligibility: api.NodeSchedulingEligible},
+		{ID: "n-2", Name: "drained", Address: "10.0.0.6", Status: api.NodeStatusReady, SchedulingEligibility: api.NodeSchedulingIneligible},
+		{ID: "n-3", Name: "starting", Address: "10.0.0.7", Status: "initializing", SchedulingEligibility: api.NodeSchedulingEligible},
+	}
+
+	got := assemble(&api.OperatorHealthReply{}, stubs, surveyedAt)
+
+	if m := byName(t, got, "fit"); !m.Healthy || !m.Eligible {
+		t.Errorf("fit Healthy/Eligible = %v/%v, want both true", m.Healthy, m.Eligible)
+	}
+
+	// Up and carrying its work while the fleet schedules nothing new onto it.
+	if m := byName(t, got, "drained"); !m.Healthy || m.Eligible {
+		t.Errorf("drained Healthy/Eligible = %v/%v, want true/false", m.Healthy, m.Eligible)
+	}
+
+	if m := byName(t, got, "starting"); m.Healthy {
+		t.Error("starting reported healthy; only a ready node is")
+	}
+}
+
 // A host that is down is still surveyed. Omitting it would silently shrink
 // every plan generated against the cluster.
 func TestAssemble_KeepsUnhealthyHosts(t *testing.T) {

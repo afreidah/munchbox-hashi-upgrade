@@ -40,6 +40,26 @@ const (
 // Survey reads the cluster and returns the snapshot a run is generated
 // against.
 func (n *Nomad) Survey(ctx context.Context) (plan.Cluster, error) {
+	cluster, err := n.Health(ctx)
+	if err != nil {
+		return plan.Cluster{}, err
+	}
+
+	name, err := n.clusterName(ctx)
+	if err != nil {
+		return plan.Cluster{}, err
+	}
+
+	cluster.Name = name
+	return cluster, nil
+}
+
+// Health reads the cluster's own verdict on itself and on each host.
+//
+// The same snapshot a survey is built on, without the name: it is read again
+// between every step of a run, and what the cluster calls itself does not
+// change while one is in progress.
+func (n *Nomad) Health(ctx context.Context) (plan.Cluster, error) {
 	q := (&api.QueryOptions{}).WithContext(ctx)
 
 	health, _, err := n.client.Operator().AutopilotServerHealth(q)
@@ -52,14 +72,7 @@ func (n *Nomad) Survey(ctx context.Context) (plan.Cluster, error) {
 		return plan.Cluster{}, fmt.Errorf("list nodes from %s: %w", n.Address(), err)
 	}
 
-	name, err := n.clusterName(ctx)
-	if err != nil {
-		return plan.Cluster{}, err
-	}
-
-	cluster := assemble(health, stubs, time.Now().UTC())
-	cluster.Name = name
-	return cluster, nil
+	return assemble(health, stubs, time.Now().UTC()), nil
 }
 
 // clusterName reads what the cluster calls itself, or empty when it publishes
@@ -91,20 +104,23 @@ func assemble(health *api.OperatorHealthReply, stubs []*api.NodeListStub, at tim
 		return cluster
 	}
 	cluster.Tolerance = health.FailureTolerance
+	cluster.Healthy = health.Healthy
 
 	servers := make(map[string]struct{}, len(health.Servers))
 	for _, s := range health.Servers {
 		host := hostOf(s.Address)
 		servers[host] = struct{}{}
 		cluster.Members = append(cluster.Members, plan.Member{
-			ID:      s.ID,
-			Name:    shortName(s.Name),
-			Addr:    host,
-			Kind:    plan.KindServer,
-			Version: s.Version,
-			Primary: s.Leader,
-			Voter:   s.Voter,
-			Status:  s.SerfStatus,
+			ID:          s.ID,
+			Name:        shortName(s.Name),
+			Addr:        host,
+			Kind:        plan.KindServer,
+			Version:     s.Version,
+			Primary:     s.Leader,
+			Voter:       s.Voter,
+			Status:      s.SerfStatus,
+			Healthy:     s.Healthy,
+			StableSince: s.StableSince,
 		})
 	}
 
@@ -116,12 +132,14 @@ func assemble(health *api.OperatorHealthReply, stubs []*api.NodeListStub, at tim
 			continue
 		}
 		cluster.Members = append(cluster.Members, plan.Member{
-			ID:      s.ID,
-			Name:    shortName(s.Name),
-			Addr:    host,
-			Kind:    plan.KindClient,
-			Version: s.Version,
-			Status:  s.Status,
+			ID:       s.ID,
+			Name:     shortName(s.Name),
+			Addr:     host,
+			Kind:     plan.KindClient,
+			Version:  s.Version,
+			Status:   s.Status,
+			Healthy:  s.Status == api.NodeStatusReady,
+			Eligible: s.SchedulingEligibility == api.NodeSchedulingEligible,
 		})
 	}
 

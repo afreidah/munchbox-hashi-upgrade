@@ -140,6 +140,28 @@ func TestSurvey(t *testing.T) {
 	}
 }
 
+// Health is read again between every step of a run, and the name is read once.
+// A cluster whose variable endpoint is broken still gates, which is what the
+// split is for: the gates poll the two reads they need and nothing else.
+func TestHealth_SkipsTheClusterName(t *testing.T) {
+	c := cluster(t, identityPath)
+
+	got, err := c.Health(t.Context())
+	if err != nil {
+		t.Fatalf("Health() error = %v, want the name read left alone", err)
+	}
+	if got.Name != "" {
+		t.Errorf("Name = %q, want Health to leave it unread", got.Name)
+	}
+	if len(got.Members) != 2 {
+		t.Errorf("members = %d, want the server and the client", len(got.Members))
+	}
+
+	if _, err := c.Survey(t.Context()); err == nil {
+		t.Error("Survey() error = nil; the same cluster should fail the name read")
+	}
+}
+
 // A cluster that has never been named surveys fine and goes unnamed. Peek
 // returns nothing rather than an error for a variable that was never set, and
 // a missing name costs the run only a plainer filename.
