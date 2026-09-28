@@ -9,4 +9,9 @@
 // runner never learn what a data bag item is. What the item looks like is not
 // this package's to choose -- the cookbook that reads it decides, and this
 // package matches it.
+//
+// Arming an upgrade is an API call and applying it is not: the server is polled
+// by its nodes and offers nothing to push at them. Fleet is that half, over SSH
+// -- the converge itself, and the hourly timer that has to be down first so a
+// scheduled run does not apply a pin the rollout has not reached yet.
 package cinc

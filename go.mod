@@ -20,6 +20,7 @@ require (
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
+	go.uber.org/mock v0.6.0 // indirect
 	golang.org/x/crypto v0.57.0 // indirect
 	golang.org/x/mod v0.41.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
@@ -29,4 +30,7 @@ require (
 	golang.org/x/vuln v1.8.0 // indirect
 )
 
-tool golang.org/x/vuln/cmd/govulncheck
+tool (
+	go.uber.org/mock/mockgen
+	golang.org/x/vuln/cmd/govulncheck
+)

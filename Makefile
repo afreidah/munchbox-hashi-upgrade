@@ -52,6 +52,19 @@ uninstall: ## Remove the installed binary from BINDIR
 
 ##@ Quality
 
+generate: ## Generate interface mocks
+	go generate ./...
+	@$(MAKE) --no-print-directory strip-mock-package-docs
+
+# mockgen writes "Package X is a generated GoMock package." above every package
+# clause. In a package whose mocks are not _test.go files that comment is a real
+# package comment, and go/doc concatenates it onto the one in interface.go.
+strip-mock-package-docs:
+	@for f in $$(git ls-files --cached --others --exclude-standard '*.go' | grep -v '_test\.go$$' | xargs -r grep -l 'is a generated GoMock package\.'); do \
+		perl -0pi -e 's{\n// Package \w+ is a generated GoMock package\.\n(package )}{\n$$1}' $$f; \
+		echo "  stripped mockgen package comment: $$f"; \
+	done
+
 test: ## Run Go tests with race detection and coverage
 	go test -race -cover $(TEST_PKGS)
 
@@ -88,5 +101,5 @@ coverage: ## Generate coverage.out from unit tests (mirrors the CI test job)
 clean: ## Remove build artifacts
 	rm -f $(BINARY) coverage.out coverage.html
 
-.PHONY: help build install uninstall test test-fast vet lint fmt govulncheck check coverage clean
+.PHONY: help build install uninstall generate strip-mock-package-docs test test-fast vet lint fmt govulncheck check coverage clean
 .DEFAULT_GOAL := help
