@@ -84,16 +84,30 @@ const (
 // its own quorum. Status is recorded in the tool's own vocabulary rather than
 // normalised, because collapsing three health vocabularies into one is an
 // interpretation, and the survey observes.
+//
+// Healthy is the tool's own verdict on the host, normalised by the client
+// package that speaks its vocabulary. For a Nomad server that is autopilot,
+// which already folds trailing log distance, last contact and a stabilisation
+// period into one answer; a second opinion here would be a second place for it
+// to be wrong. StableSince is when that verdict last changed, which is what
+// tells a host that has come back from a restart apart from one that has not
+// gone down yet, and is zero where the tool does not report it.
+//
+// Eligible is whether the host accepts new work. A host that is up and
+// ineligible is a host the fleet is no longer scheduling onto.
 type Member struct {
-	ID      string
-	Name    string
-	Addr    string
-	Kind    Kind
-	Version string
-	Status  string            `yaml:",omitempty"`
-	Primary bool              `yaml:",omitempty"`
-	Voter   bool              `yaml:",omitempty"`
-	Labels  map[string]string `yaml:",omitempty"`
+	ID          string
+	Name        string
+	Addr        string
+	Kind        Kind
+	Version     string
+	Status      string            `yaml:",omitempty"`
+	Primary     bool              `yaml:",omitempty"`
+	Voter       bool              `yaml:",omitempty"`
+	Healthy     bool              `yaml:",omitempty"`
+	Eligible    bool              `yaml:",omitempty"`
+	StableSince time.Time         `yaml:"stable_since,omitempty"`
+	Labels      map[string]string `yaml:",omitempty"`
 }
 
 // Cluster is the fleet as it was when the run was generated. It travels with
@@ -107,11 +121,13 @@ type Member struct {
 // Tolerance is how many servers the cluster could lose without losing
 // coordination, as the cluster itself reports it rather than as arithmetic on
 // a voter count. A tool whose coordination does not run on its own quorum
-// reports zero.
+// reports zero. Healthy is the same kind of fact one level up: the tool's
+// verdict on the coordinating set as a whole.
 type Cluster struct {
 	Name       string    `yaml:",omitempty"`
 	SurveyedAt time.Time `yaml:"surveyed_at"`
 	Tolerance  int
+	Healthy    bool `yaml:",omitempty"`
 	Members    []Member
 }
 

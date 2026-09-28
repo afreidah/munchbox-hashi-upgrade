@@ -1,0 +1,129 @@
+// -------------------------------------------------------------------------------
+// Gate - Waiting On A Cluster To Settle
+//
+// Author: Alex Freidah
+//
+// Construction, and the polling loop every assertion runs through. A host that
+// has just restarted needs time to rejoin and be trusted again, so a gate reads
+// the cluster on an interval until its condition holds, and on timeout reports
+// the condition that was still unmet.
+//
+// The cluster is read through a one-method interface declared here, over the
+// neutral types the client packages return. So this package never imports a
+// tool's API, and the gates are tested against a fake instead of a cluster.
+// -------------------------------------------------------------------------------
+
+package ready
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/afreidah/munchbox-hashi-upgrade/internal/plan"
+)
+
+// How long a gate waits, and how often it looks, when the caller says nothing.
+const (
+	DefaultTimeout  = 3 * time.Minute
+	DefaultInterval = 5 * time.Second
+)
+
+//go:generate mockgen -destination=mock_generated_test.go -package=ready github.com/afreidah/munchbox-hashi-upgrade/internal/ready Cluster
+
+// Cluster reads a cluster's verdict on itself.
+//
+// One method, because that is the whole of what a gate needs: the client
+// package that owns the tool's vocabulary has already normalised it.
+type Cluster interface {
+	Health(ctx context.Context) (plan.Cluster, error)
+}
+
+// Options configure a gate. A zero Timeout or Interval takes the default, so
+// the usual caller supplies a cluster and nothing else.
+type Options struct {
+	Cluster  Cluster
+	Timeout  time.Duration
+	Interval time.Duration
+}
+
+// Gate asserts that a cluster has absorbed a step.
+type Gate struct {
+	cluster  Cluster
+	timeout  time.Duration
+	interval time.Duration
+}
+
+// New returns a gate reading through opts.Cluster.
+func New(opts Options) (*Gate, error) {
+	if opts.Cluster == nil {
+		return nil, errors.New("cluster is required")
+	}
+
+	g := &Gate{cluster: opts.Cluster, timeout: opts.Timeout, interval: opts.Interval}
+	if g.timeout <= 0 {
+		g.timeout = DefaultTimeout
+	}
+	if g.interval <= 0 {
+		g.interval = DefaultInterval
+	}
+
+	return g, nil
+}
+
+// await reads the cluster until assert is satisfied, and reports what assert
+// last objected to when it gives up.
+//
+// The unmet condition is what makes a timeout worth reading: that a gate waited
+// three minutes says nothing, and that it spent them waiting for a host to
+// become a voter again says where to look.
+func (g *Gate) await(ctx context.Context, what string, assert func(plan.Cluster) error) error {
+	ctx, cancel := context.WithTimeout(ctx, g.timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(g.interval)
+	defer ticker.Stop()
+
+	// The context is checked before each read rather than only after one. A
+	// cancelled caller has abandoned the run, and a condition that happens to
+	// pass on the way out is not permission to move to the next host.
+	var unmet error
+	for {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("%s: %w", what, errors.Join(err, unmet))
+		}
+
+		cluster, err := g.cluster.Health(ctx)
+		switch {
+		case err != nil:
+			// A read that failed is not a condition that failed. A cluster
+			// refusing connections mid-restart is one of the things being
+			// waited out.
+			unmet = err
+		default:
+			if unmet = assert(cluster); unmet == nil {
+				return nil
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+		case <-ticker.C:
+		}
+	}
+}
+
+// member returns the named host, or an error naming what the cluster did report.
+//
+// A host absent from the cluster's own view is the ordinary state for the
+// seconds after a restart, so it is a condition to wait on rather than a fault.
+func member(cluster plan.Cluster, name string) (plan.Member, error) {
+	for _, m := range cluster.Members {
+		if m.Name == name {
+			return m, nil
+		}
+	}
+
+	return plan.Member{}, fmt.Errorf("%s is not in the cluster", name)
+}
