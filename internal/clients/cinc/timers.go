@@ -1,0 +1,160 @@
+// -------------------------------------------------------------------------------
+// Timers - Freezing And Thawing The Scheduled Converge
+//
+// Author: Alex Freidah
+//
+// The hourly timer is what makes an upgrade racy: a converge that fires on a
+// node partway through a rollout applies a cookbook the run has not promoted
+// yet. Freeze stops it everywhere and confirms both halves of the condition -
+// the timer is down, and nothing is already converging.
+//
+// Thaw is the compensation and runs on every node whether its freeze succeeded
+// or not, because leaving automation stopped fleet-wide is worse than enabling
+// a timer that was already enabled.
+// -------------------------------------------------------------------------------
+
+package cinc
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"sync"
+
+	"github.com/afreidah/munchbox-hashi-upgrade/internal/clients/ssh"
+)
+
+// Exit code flock reports when the lock is held, distinct from the codes it
+// uses for its own failures so a busy node is told apart from a broken one.
+const lockBusyCode = 9
+
+// Conditions a freeze refuses on, rather than the command itself failing.
+var (
+	ErrConvergeInFlight = errors.New("converge already running")
+	ErrTimerActive      = errors.New("timer still active after disable")
+)
+
+// NodeError is a failure attributed to the node it happened on.
+type NodeError struct {
+	Target ssh.Target
+	Err    error
+}
+
+// Error names the node, since a fleet-wide failure is unreadable without it.
+func (e *NodeError) Error() string {
+	return fmt.Sprintf("%s: %v", e.Target.Host, e.Err)
+}
+
+// Unwrap returns the underlying failure.
+func (e *NodeError) Unwrap() error { return e.Err }
+
+// Freeze stops the scheduled converge on every target and confirms it stopped.
+//
+// A node that is mid-converge fails rather than being waited on: the caller
+// decides whether to retry or abandon, and blocking here would hold the whole
+// fleet behind the slowest run.
+func (f *Fleet) Freeze(ctx context.Context, targets []ssh.Target) error {
+	return f.each(ctx, targets, func(ctx context.Context, s Session) error {
+		if _, err := must(ctx, s, "systemctl disable --now "+timerUnit); err != nil {
+			return err
+		}
+
+		// --- is-active exits non-zero on a stopped unit, so a clean exit here
+		//     is the failure: the timer survived the disable. ---
+		if res, err := run(ctx, s, "systemctl is-active "+timerUnit); err != nil {
+			return err
+		} else if res.OK() {
+			return ErrTimerActive
+		}
+
+		return inFlight(ctx, s)
+	})
+}
+
+// Thaw starts the scheduled converge on every target.
+//
+// Every target is attempted even once one has failed, and enabling a timer that
+// is already enabled is a no-op, so this is safe to call after a partial freeze.
+func (f *Fleet) Thaw(ctx context.Context, targets []ssh.Target) error {
+	return f.each(ctx, targets, func(ctx context.Context, s Session) error {
+		_, err := must(ctx, s, "systemctl enable --now "+timerUnit)
+		return err
+	})
+}
+
+// inFlight reports whether a converge holds the run lock.
+//
+// The lock file outlives the run that made it and keeps the pid of a process
+// that has exited, so its existence proves nothing; taking the lock does.
+func inFlight(ctx context.Context, s Session) error {
+	res, err := run(ctx, s, fmt.Sprintf("flock -n -E %d %s true", lockBusyCode, runLock))
+	switch {
+	case err != nil:
+		return err
+	case res.Code == lockBusyCode:
+		return ErrConvergeInFlight
+	case !res.OK():
+		return fmt.Errorf("checking the run lock: exit %d: %s", res.Code, trim(res.Output))
+	}
+
+	return nil
+}
+
+// each runs fn against every target at once and joins what failed.
+func (f *Fleet) each(ctx context.Context, targets []ssh.Target, fn func(context.Context, Session) error) error {
+	errs := make([]error, len(targets))
+
+	var wg sync.WaitGroup
+	for i, target := range targets {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs[i] = f.on(ctx, target, fn)
+		}()
+	}
+	wg.Wait()
+
+	return errors.Join(errs...)
+}
+
+// on opens a session to target and hands it to fn, attributing any failure.
+func (f *Fleet) on(ctx context.Context, target ssh.Target, fn func(context.Context, Session) error) error {
+	session, err := f.dial.Connect(target)
+	if err != nil {
+		return &NodeError{Target: target, Err: err}
+	}
+	defer func() { _ = session.Close() }()
+
+	if err := fn(ctx, session); err != nil {
+		return &NodeError{Target: target, Err: err}
+	}
+
+	return nil
+}
+
+// run runs cmd without streaming it anywhere, returning the result for the
+// caller to decide about. These commands answer in one line and there is
+// nothing to watch.
+func run(ctx context.Context, s Session, cmd string) (ssh.Result, error) {
+	return s.Run(ctx, cmd, nil)
+}
+
+// must is run for a command whose exit status carries no meaning beyond
+// success, folding a non-zero exit into the error.
+func must(ctx context.Context, s Session, cmd string) (ssh.Result, error) {
+	res, err := run(ctx, s, cmd)
+	if err != nil {
+		return res, err
+	}
+	if !res.OK() {
+		return res, fmt.Errorf("%s: exit %d: %s", cmd, res.Code, trim(res.Output))
+	}
+
+	return res, nil
+}
+
+// trim reduces command output to one line, so a wrapped error stays readable.
+func trim(out string) string {
+	return strings.Join(strings.Fields(out), " ")
+}
