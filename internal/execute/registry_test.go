@@ -101,7 +101,7 @@ func TestNoOpRunsNothingAndSettlesUnnecessary(t *testing.T) {
 	if result.Outcome != plan.Unnecessary {
 		t.Errorf("outcome = %q, want %q", result.Outcome, plan.Unnecessary)
 	}
-	if !strings.Contains(out.String(), "would run: Hold the converges") {
+	if !strings.Contains(out.String(), "would run ("+steps.CommandFreeze+")") {
 		t.Errorf("output = %q, want it to report what it would run", out.String())
 	}
 }
@@ -123,7 +123,7 @@ func TestDryRunDoesNotCallAStepThatWrites(t *testing.T) {
 	if result.Outcome != plan.Unnecessary {
 		t.Errorf("outcome = %q, want %q", result.Outcome, plan.Unnecessary)
 	}
-	if !strings.Contains(out.String(), "would write: Hold the converges") {
+	if !strings.Contains(out.String(), "would write ("+steps.CommandFreeze+")") {
 		t.Errorf("output = %q, want it to report what it would write", out.String())
 	}
 }
