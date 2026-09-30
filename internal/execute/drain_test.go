@@ -73,7 +73,7 @@ func TestUpgradeNeverDrainsAServer(t *testing.T) {
 	fleet.EXPECT().Converge(gomock.Any(), gomock.Any(), gomock.Any()).Return(ssh.Result{}, nil)
 
 	wait := NewMockWaiter(ctrl)
-	wait.EXPECT().Server(gomock.Any(), "server-a", "2.0.6", gomock.Any()).Return(nil)
+	wait.EXPECT().Server(gomock.Any(), "server-a", "2.0.6").Return(nil)
 
 	deps := live(&Deps{
 		Run: draining(), Fleet: fleet, Wait: wait,

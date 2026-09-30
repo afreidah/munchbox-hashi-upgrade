@@ -131,6 +131,36 @@ func TestPinWritesTheNewVersionAndCompensatesWithTheOld(t *testing.T) {
 	}
 }
 
+// Putting back a pin that was never set means removing the item. Writing an
+// empty version is refused, and leaving it at the new version would have every
+// host converge to it once the unwind releases the timers.
+func TestPinThatWasNotSetBeforeIsRemovedOnTheWayBack(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	versions := NewMockPinner(ctrl)
+	versions.EXPECT().Pin(gomock.Any(), "nomad").Return("", nil)
+	versions.EXPECT().SetPin(gomock.Any(), "nomad", "2.0.6").Return(nil)
+	versions.EXPECT().ClearPin(gomock.Any(), "nomad").Return(nil)
+
+	deps := live(&Deps{Versions: versions})
+
+	result, err := pin(deps)(context.Background(), task(steps.CommandPin, map[string]any{
+		"tool": "nomad", "version": "2.0.6",
+	}))
+	if err != nil {
+		t.Fatalf("pin: %v", err)
+	}
+	if result.Undo == nil {
+		t.Fatal("pin left no compensation")
+	}
+	if !strings.Contains(result.Undo.Label, "removing") {
+		t.Errorf("label = %q, want it to say the pin is being removed", result.Undo.Label)
+	}
+	if err := result.Undo.Undo(context.Background()); err != nil {
+		t.Fatalf("compensation: %v", err)
+	}
+}
+
 // A pin already at the target is left alone, so a resumed run does not rewrite
 // what it wrote the first time.
 func TestPinAlreadyAtTheTargetIsUnnecessary(t *testing.T) {
@@ -200,7 +230,7 @@ func TestUpgradeWaitsOnTheServerGateForAServer(t *testing.T) {
 	fleet.EXPECT().Converge(gomock.Any(), gomock.Any(), gomock.Any()).Return(ssh.Result{}, nil)
 
 	wait := NewMockWaiter(ctrl)
-	wait.EXPECT().Server(gomock.Any(), "server-a", "2.0.6", gomock.Any()).Return(nil)
+	wait.EXPECT().Server(gomock.Any(), "server-a", "2.0.6").Return(nil)
 
 	deps := live(&Deps{Run: run(), Fleet: fleet, Wait: wait, Target: targets})
 

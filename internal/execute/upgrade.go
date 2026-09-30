@@ -67,13 +67,15 @@ func upgrade(deps *Deps) runner.Step {
 			}
 		}
 
-		// Stamped before the converge, not after. The server gate compares the
-		// cluster's stability clock against this instant to tell a host that has
-		// come back from one that has not gone down yet; taking it afterwards
-		// would accept the pre-restart verdict as proof of the restart.
-		restarted := time.Now().UTC()
-
-		if _, err := deps.Fleet.Converge(ctx, target, deps.Out); err != nil {
+		// Labelled with the host, because the converge's own output does not
+		// say which one it came from and several in a row otherwise read as
+		// one host repeating itself.
+		out := withPrefix(deps.Out, name)
+		_, err = deps.Fleet.Converge(ctx, target, out)
+		if flusher, ok := out.(interface{ Flush() error }); ok {
+			_ = flusher.Flush()
+		}
+		if err != nil {
 			return runner.Result{}, err
 		}
 
@@ -90,7 +92,7 @@ func upgrade(deps *Deps) runner.Step {
 		// returning to service, and the run cannot touch the next server until
 		// this one is a voter again.
 		if member.Kind == plan.KindServer {
-			err = deps.Wait.Server(ctx, name, want, restarted)
+			err = deps.Wait.Server(ctx, name, want)
 		} else {
 			err = deps.Wait.Client(ctx, name, want)
 		}

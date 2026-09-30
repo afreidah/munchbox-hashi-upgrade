@@ -48,15 +48,34 @@ func pin(deps *Deps) runner.Step {
 			return runner.Result{}, err
 		}
 
+		// Putting back an absent pin means removing the item, not writing an
+		// empty version: nothing reads an item with no version and a converge
+		// against one fails, so the two are different states. Leaving the pin
+		// at the new version would be worse still -- the timers come back on
+		// as the run unwinds, and every host would then converge to it
+		// unattended, which is the thing freezing before pinning prevents.
 		return runner.Result{
 			Undo: &runner.Compensation{
-				Label: fmt.Sprintf("restoring the %s pin to %s", tool, was),
+				Label: restoring(tool, was),
 				Undo: func(ctx context.Context) error {
+					if was == "" {
+						return deps.Versions.ClearPin(ctx, tool)
+					}
 					return deps.Versions.SetPin(ctx, tool, was)
 				},
 			},
 		}, nil
 	}
+}
+
+// restoring is what the operator is told is being unwound. A pin that was not
+// set before the run is put back by removal, and "restoring the pin to
+// nothing" reads as a defect rather than as the intent.
+func restoring(tool, was string) string {
+	if was == "" {
+		return fmt.Sprintf("removing the %s pin, which was not set before the run", tool)
+	}
+	return fmt.Sprintf("restoring the %s pin to %s", tool, was)
 }
 
 // arg reads a string argument a task's action declares.

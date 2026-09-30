@@ -137,7 +137,7 @@ func TestAwait(t *testing.T) {
 			read{cluster: fleet()},
 		)
 
-		if err := g.Server(t.Context(), "goren", target, restarted); err != nil {
+		if err := g.Server(t.Context(), "goren", target); err != nil {
 			t.Errorf("Server: %v", err)
 		}
 	})
@@ -160,7 +160,7 @@ func TestAwait(t *testing.T) {
 	t.Run("names the condition it gave up on", func(t *testing.T) {
 		g := gate(t, read{cluster: dent("goren", func(m *plan.Member) { m.Voter = false })})
 
-		err := g.Server(t.Context(), "goren", target, restarted)
+		err := g.Server(t.Context(), "goren", target)
 		if err == nil {
 			t.Fatal("expected a timeout")
 		}

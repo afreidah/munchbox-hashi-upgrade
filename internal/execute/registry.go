@@ -41,6 +41,7 @@ import (
 type Pinner interface {
 	Pin(ctx context.Context, tool string) (string, error)
 	SetPin(ctx context.Context, tool, version string) error
+	ClearPin(ctx context.Context, tool string) error
 }
 
 // Fleeter drives cinc over ssh: the converge itself, and the timers that would
@@ -62,7 +63,7 @@ type Surveyor interface {
 // Coordination waits the other way, for a host to stop being the one that
 // coordinates.
 type Waiter interface {
-	Server(ctx context.Context, name, target string, restarted time.Time) error
+	Server(ctx context.Context, name, target string) error
 	Client(ctx context.Context, name, target string) error
 	Coordination(ctx context.Context, from string) error
 }

@@ -43,7 +43,14 @@ func unnamedCluster(t *testing.T) *nomad.Nomad {
 	return newCluster(t, nil, []string{identityPath})
 }
 
-func newCluster(t *testing.T, fail, absent []string) *nomad.Nomad {
+// unwellCluster answers every read but reports itself unhealthy, the way
+// autopilot does: a 429 carrying the health reply.
+func unwellCluster(t *testing.T) *nomad.Nomad {
+	t.Helper()
+	return newCluster(t, nil, nil, healthPath)
+}
+
+func newCluster(t *testing.T, fail, absent []string, sick ...string) *nomad.Nomad {
 	t.Helper()
 
 	mux := http.NewServeMux()
@@ -55,10 +62,29 @@ func newCluster(t *testing.T, fail, absent []string) *nomad.Nomad {
 	for _, p := range absent {
 		unnamed[p] = true
 	}
+	unwell := make(map[string]bool, len(sick))
+	for _, p := range sick {
+		unwell[p] = true
+	}
 
 	mux.HandleFunc(healthPath, func(w http.ResponseWriter, _ *http.Request) {
 		if broken[healthPath] {
 			http.Error(w, "autopilot unavailable", http.StatusInternalServerError)
+			return
+		}
+
+		// Autopilot reports an unhealthy cluster as 429 carrying the health
+		// reply, which is an answer rather than a failure.
+		if unwell[healthPath] {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusTooManyRequests)
+			writeJSON(t, w, api.OperatorHealthReply{
+				FailureTolerance: 0,
+				Healthy:          false,
+				Servers: []api.ServerHealth{
+					{ID: "s-1", Name: "alpha.global", Address: "10.0.0.1:4647", Version: "2.0.5", SerfStatus: "alive", Leader: true, Voter: true, Healthy: false},
+				},
+			})
 			return
 		}
 		writeJSON(t, w, api.OperatorHealthReply{
@@ -111,6 +137,31 @@ func writeJSON(t *testing.T, w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		t.Errorf("encode response: %v", err)
+	}
+}
+
+// An unhealthy cluster is a condition a run waits out, not a read that failed.
+// Autopilot reports one as a 429 carrying the health reply, and the API client
+// treats every non-2xx as an error and throws the body away -- so without
+// recovering it, Cluster.Healthy could only ever be true and every gate that
+// reads it was checking nothing.
+func TestHealthOfAnUnwellCluster(t *testing.T) {
+	cluster, err := unwellCluster(t).Health(t.Context())
+	if err != nil {
+		t.Fatalf("Health of an unwell cluster: %v", err)
+	}
+
+	if cluster.Healthy {
+		t.Error("Healthy = true, want false")
+	}
+	if cluster.Tolerance != 0 {
+		t.Errorf("Tolerance = %d, want 0", cluster.Tolerance)
+	}
+	if len(cluster.Members) == 0 {
+		t.Fatal("the reply carried no members")
+	}
+	if cluster.Members[0].Healthy {
+		t.Error("the member reads healthy in an unhealthy reply")
 	}
 }
 

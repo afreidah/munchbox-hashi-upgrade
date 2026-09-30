@@ -33,39 +33,44 @@ func refuses(t *testing.T, err error, want string) {
 
 func TestServer(t *testing.T) {
 	t.Run("passes a host that rejoined at the target", func(t *testing.T) {
-		if err := gate(t, read{cluster: fleet()}).Server(t.Context(), "goren", target, restarted); err != nil {
+		if err := gate(t, read{cluster: fleet()}).Server(t.Context(), "goren", target); err != nil {
 			t.Errorf("Server: %v", err)
 		}
 	})
 
-	// The whole reason the restart time is passed in. A host that has not gone
-	// down yet reads as healthy, a voter, and at the target as soon as the pin
-	// is set -- every other condition here passes on a host nothing touched.
-	t.Run("refuses health that predates the restart", func(t *testing.T) {
-		cluster := dent("goren", func(m *plan.Member) { m.StableSince = restarted.Add(-time.Hour) })
-
-		err := gate(t, read{cluster: cluster}).Server(t.Context(), "goren", target, restarted)
-		refuses(t, err, "from before the restart")
-	})
-
+	// The version is the condition a host nothing touched cannot satisfy: it is
+	// read from the running agent rather than from the pin, so a host that has
+	// not restarted still reports the old one however healthy it looks.
 	t.Run("refuses a host that is still on the old version", func(t *testing.T) {
 		cluster := dent("goren", func(m *plan.Member) { m.Version = "2.0.5" })
 
-		err := gate(t, read{cluster: cluster}).Server(t.Context(), "goren", target, restarted)
+		err := gate(t, read{cluster: cluster}).Server(t.Context(), "goren", target)
 		refuses(t, err, "running 2.0.5, not "+target)
+	})
+
+	// An agent that goes down and comes back inside one health interval is
+	// never observed unhealthy, so its stability timestamp still reads from
+	// before the restart. Asking about it would have the gate wait out its
+	// timeout on a host that had already arrived, which is what it did.
+	t.Run("passes a host whose health verdict predates the restart", func(t *testing.T) {
+		cluster := dent("goren", func(m *plan.Member) { m.StableSince = settled.Add(-time.Hour) })
+
+		if err := gate(t, read{cluster: cluster}).Server(t.Context(), "goren", target); err != nil {
+			t.Errorf("Server: %v", err)
+		}
 	})
 
 	t.Run("refuses a host autopilot calls unhealthy", func(t *testing.T) {
 		cluster := dent("goren", func(m *plan.Member) { m.Healthy = false })
 
-		err := gate(t, read{cluster: cluster}).Server(t.Context(), "goren", target, restarted)
+		err := gate(t, read{cluster: cluster}).Server(t.Context(), "goren", target)
 		refuses(t, err, "goren is not healthy")
 	})
 
 	t.Run("refuses a host that rejoined as a non-voter", func(t *testing.T) {
 		cluster := dent("goren", func(m *plan.Member) { m.Voter = false })
 
-		err := gate(t, read{cluster: cluster}).Server(t.Context(), "goren", target, restarted)
+		err := gate(t, read{cluster: cluster}).Server(t.Context(), "goren", target)
 		refuses(t, err, "not a voter")
 	})
 
@@ -75,7 +80,7 @@ func TestServer(t *testing.T) {
 		cluster := fleet()
 		cluster.Tolerance = 0
 
-		err := gate(t, read{cluster: cluster}).Server(t.Context(), "goren", target, restarted)
+		err := gate(t, read{cluster: cluster}).Server(t.Context(), "goren", target)
 		refuses(t, err, "failure tolerance is 0")
 	})
 
@@ -83,14 +88,14 @@ func TestServer(t *testing.T) {
 		cluster := fleet()
 		cluster.Healthy = false
 
-		err := gate(t, read{cluster: cluster}).Server(t.Context(), "goren", target, restarted)
+		err := gate(t, read{cluster: cluster}).Server(t.Context(), "goren", target)
 		refuses(t, err, "the cluster is not healthy")
 	})
 
 	// A host missing from the cluster's own view is ordinary in the seconds
 	// after a restart, so it is waited on and then reported as absent.
 	t.Run("refuses a host the cluster does not report", func(t *testing.T) {
-		err := gate(t, read{cluster: fleet()}).Server(t.Context(), "munch", target, restarted)
+		err := gate(t, read{cluster: fleet()}).Server(t.Context(), "munch", target)
 		refuses(t, err, "munch is not in the cluster")
 	})
 }

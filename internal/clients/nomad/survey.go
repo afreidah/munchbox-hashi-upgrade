@@ -17,8 +17,11 @@ package nomad
 import (
 	"cmp"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"slices"
 	"strings"
 	"time"
@@ -64,7 +67,16 @@ func (n *Nomad) Health(ctx context.Context) (plan.Cluster, error) {
 
 	health, _, err := n.client.Operator().AutopilotServerHealth(q)
 	if err != nil {
-		return plan.Cluster{}, fmt.Errorf("read server health from %s: %w", n.Address(), err)
+		// An unhealthy cluster is an answer, not a failure. Autopilot reports
+		// one as 429 carrying the health reply as its body, and the API client
+		// treats every non-2xx as an error and discards it -- so without this
+		// the unhealthy case is unreachable and every caller that reads
+		// Cluster.Healthy is reading a field that can only ever be true.
+		if unhealthy, ok := unhealthyReply(err); ok {
+			health = unhealthy
+		} else {
+			return plan.Cluster{}, fmt.Errorf("read server health from %s: %w", n.Address(), err)
+		}
 	}
 
 	stubs, _, err := n.client.Nodes().List(q)
@@ -73,6 +85,26 @@ func (n *Nomad) Health(ctx context.Context) (plan.Cluster, error) {
 	}
 
 	return assemble(health, stubs, time.Now().UTC()), nil
+}
+
+// unhealthyReply recovers the health reply autopilot sends with a 429.
+//
+// The status is how autopilot says the cluster is not healthy, which is a
+// condition a run waits out rather than an error it stops for. Any other
+// status, or a body that will not parse, is left as the error it was: a
+// cluster that cannot be read is different from one that reads as unwell.
+func unhealthyReply(err error) (*api.OperatorHealthReply, bool) {
+	var resp api.UnexpectedResponseError
+	if !errors.As(err, &resp) || resp.StatusCode() != http.StatusTooManyRequests {
+		return nil, false
+	}
+
+	var health api.OperatorHealthReply
+	if json.Unmarshal([]byte(resp.Body()), &health) != nil {
+		return nil, false
+	}
+
+	return &health, true
 }
 
 // clusterName reads what the cluster calls itself, or empty when it publishes

@@ -44,6 +44,20 @@ func (m *MockPinner) EXPECT() *MockPinnerMockRecorder {
 	return m.recorder
 }
 
+// ClearPin mocks base method.
+func (m *MockPinner) ClearPin(ctx context.Context, tool string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ClearPin", ctx, tool)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ClearPin indicates an expected call of ClearPin.
+func (mr *MockPinnerMockRecorder) ClearPin(ctx, tool any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ClearPin", reflect.TypeOf((*MockPinner)(nil).ClearPin), ctx, tool)
+}
+
 // Pin mocks base method.
 func (m *MockPinner) Pin(ctx context.Context, tool string) (string, error) {
 	m.ctrl.T.Helper()
@@ -232,17 +246,17 @@ func (mr *MockWaiterMockRecorder) Coordination(ctx, from any) *gomock.Call {
 }
 
 // Server mocks base method.
-func (m *MockWaiter) Server(ctx context.Context, name, target string, restarted time.Time) error {
+func (m *MockWaiter) Server(ctx context.Context, name, target string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Server", ctx, name, target, restarted)
+	ret := m.ctrl.Call(m, "Server", ctx, name, target)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // Server indicates an expected call of Server.
-func (mr *MockWaiterMockRecorder) Server(ctx, name, target, restarted any) *gomock.Call {
+func (mr *MockWaiterMockRecorder) Server(ctx, name, target any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Server", reflect.TypeOf((*MockWaiter)(nil).Server), ctx, name, target, restarted)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Server", reflect.TypeOf((*MockWaiter)(nil).Server), ctx, name, target)
 }
 
 // MockCoordinator is a mock of Coordinator interface.

@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/afreidah/munchbox-hashi-upgrade/internal/plan"
@@ -42,10 +43,14 @@ type Cluster interface {
 
 // Options configure a gate. A zero Timeout or Interval takes the default, so
 // the usual caller supplies a cluster and nothing else.
+// Out is where a gate reports what it is waiting for. A gate that waits up to
+// three minutes in silence cannot be told apart from one that has hung, which
+// is the wrong thing to be wondering during an upgrade. Nil discards.
 type Options struct {
 	Cluster  Cluster
 	Timeout  time.Duration
 	Interval time.Duration
+	Out      io.Writer
 }
 
 // Gate asserts that a cluster has absorbed a step.
@@ -53,6 +58,7 @@ type Gate struct {
 	cluster  Cluster
 	timeout  time.Duration
 	interval time.Duration
+	out      io.Writer
 }
 
 // New returns a gate reading through opts.Cluster.
@@ -61,7 +67,10 @@ func New(opts Options) (*Gate, error) {
 		return nil, errors.New("cluster is required")
 	}
 
-	g := &Gate{cluster: opts.Cluster, timeout: opts.Timeout, interval: opts.Interval}
+	g := &Gate{cluster: opts.Cluster, timeout: opts.Timeout, interval: opts.Interval, out: opts.Out}
+	if g.out == nil {
+		g.out = io.Discard
+	}
 	if g.timeout <= 0 {
 		g.timeout = DefaultTimeout
 	}
@@ -72,13 +81,28 @@ func New(opts Options) (*Gate, error) {
 	return g, nil
 }
 
+// How much of an objection is worth printing while waiting. An API error can
+// carry a whole response body, and several hundred characters of JSON on a
+// five-second poll buries the run it is reporting on.
+const briefly = 120
+
+// brief shortens a reason to something that fits a line.
+func brief(reason string) string {
+	if len(reason) <= briefly {
+		return reason
+	}
+	return reason[:briefly] + "..."
+}
+
 // await reads the cluster until assert is satisfied, and reports what assert
 // last objected to when it gives up.
 //
 // The unmet condition is what makes a timeout worth reading: that a gate waited
 // three minutes says nothing, and that it spent them waiting for a host to
 // become a voter again says where to look.
-func (g *Gate) await(ctx context.Context, what string, assert func(plan.Cluster) error) error {
+// arrived is printed once the condition holds, stated as the fact it
+// establishes rather than as "ready".
+func (g *Gate) await(ctx context.Context, what, arrived string, assert func(plan.Cluster) error) error {
 	ctx, cancel := context.WithTimeout(ctx, g.timeout)
 	defer cancel()
 
@@ -88,6 +112,13 @@ func (g *Gate) await(ctx context.Context, what string, assert func(plan.Cluster)
 	// The context is checked before each read rather than only after one. A
 	// cancelled caller has abandoned the run, and a condition that happens to
 	// pass on the way out is not permission to move to the next host.
+	fmt.Fprintf(g.out, "  waiting for %s\n", what)
+	began := time.Now()
+
+	// Reported only when it changes. The same objection every five seconds is
+	// noise, and a new one is the only thing that says progress was made.
+	var said string
+
 	var unmet error
 	for {
 		if err := ctx.Err(); err != nil {
@@ -103,8 +134,14 @@ func (g *Gate) await(ctx context.Context, what string, assert func(plan.Cluster)
 			unmet = err
 		default:
 			if unmet = assert(cluster); unmet == nil {
+				fmt.Fprintf(g.out, "    %s (%s)\n", arrived, time.Since(began).Round(time.Second))
 				return nil
 			}
+		}
+
+		if unmet != nil && unmet.Error() != said {
+			said = unmet.Error()
+			fmt.Fprintf(g.out, "    %s\n", brief(said))
 		}
 
 		select {

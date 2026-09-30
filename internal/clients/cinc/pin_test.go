@@ -127,3 +127,39 @@ func TestSetPin(t *testing.T) {
 		}
 	})
 }
+
+func TestClearPin(t *testing.T) {
+	// How a run puts back a pin that was not set before it ran: the tool reads
+	// as unpinned again, which is the state it started from.
+	t.Run("removes a pin so the tool reads as unpinned", func(t *testing.T) {
+		c := live(t)
+		if err := c.SetPin(t.Context(), "nomad", "2.0.7"); err != nil {
+			t.Fatalf("SetPin: %v", err)
+		}
+		if err := c.ClearPin(t.Context(), "nomad"); err != nil {
+			t.Fatalf("ClearPin: %v", err)
+		}
+
+		got, err := c.Pin(t.Context(), "nomad")
+		if err != nil {
+			t.Fatalf("Pin: %v", err)
+		}
+		if got != "" {
+			t.Errorf("Pin = %q, want empty after clearing", got)
+		}
+	})
+
+	// An item already gone is the wanted state. A compensation that ran twice,
+	// or one for a pin the run never managed to write, must not fail.
+	t.Run("clearing a pin that is not there is not an error", func(t *testing.T) {
+		if err := live(t).ClearPin(t.Context(), "consul"); err != nil {
+			t.Errorf("ClearPin of an absent pin: %v", err)
+		}
+	})
+
+	t.Run("rejects an empty tool", func(t *testing.T) {
+		if err := live(t).ClearPin(t.Context(), ""); err == nil {
+			t.Error("expected an error for an empty tool")
+		}
+	})
+}
