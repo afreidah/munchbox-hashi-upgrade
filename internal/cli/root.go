@@ -33,5 +33,6 @@ func Root() *cobra.Command {
 	}
 	root.AddCommand(newPlanCmd())
 	root.AddCommand(newRunCmd())
+	root.AddCommand(newStatusCmd())
 	return root
 }

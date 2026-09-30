@@ -85,7 +85,7 @@ func runPlan(cmd *cobra.Command, tool plan.Tool, opts planOptions) error {
 		return errors.New("the survey found no hosts; check the address and token")
 	}
 
-	spec := plan.Spec{Tool: tool, To: opts.to, Drain: opts.drain}
+	spec := plan.Spec{Tool: tool, From: running(cluster), To: opts.to, Drain: opts.drain}
 	run := plan.Create(
 		filepath.Join(opts.dir, runFilename(tool, cluster, time.Now().UTC())),
 		Version,
@@ -100,6 +100,33 @@ func runPlan(cmd *cobra.Command, tool plan.Tool, opts planOptions) error {
 
 	_, err = io.WriteString(cmd.OutOrStdout(), summarise(run))
 	return err
+}
+
+// running is the version the fleet is on, when it is on one.
+//
+// Read from the hosts rather than from the pin, which would mean giving plan
+// credentials for a configuration server it otherwise never touches. It also
+// answers the more useful question: the pin says what the fleet is aimed at,
+// and this says where it actually is.
+//
+// A fleet part-way through an upgrade is on no single version, and saying so
+// would be a guess. Empty, and a reader is told the start was not recorded
+// rather than told a version that is only true of some hosts.
+func running(cluster plan.Cluster) string {
+	var version string
+
+	for _, m := range cluster.Members {
+		switch {
+		case m.Version == "":
+			continue
+		case version == "":
+			version = m.Version
+		case m.Version != version:
+			return ""
+		}
+	}
+
+	return version
 }
 
 // runFilename names a run after the cluster it was generated against, so two
