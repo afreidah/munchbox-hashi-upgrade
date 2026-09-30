@@ -263,8 +263,9 @@ func TestBuild_ClientsOnlyCommitsNothing(t *testing.T) {
 	}
 }
 
-// Moving coordination and restarting the host that was coordinating are the
-// two boundaries an operator has to assent to deliberately.
+// Every host is assented to. Moving coordination and restarting the host that
+// was coordinating are the two that have to be typed rather than waved
+// through, because they are the two the cluster cannot absorb silently.
 func TestBuild_Confirms(t *testing.T) {
 	got := steps.Build(spec, cluster(server("alpha", false), server("bravo", true), client("charlie")))
 
@@ -272,7 +273,7 @@ func TestBuild_Confirms(t *testing.T) {
 		"upgrade-alpha":     plan.ConfirmPrompt,
 		steps.TaskIDHandoff: plan.ConfirmTyped,
 		"upgrade-bravo":     plan.ConfirmTyped,
-		"upgrade-charlie":   plan.ConfirmNone,
+		"upgrade-charlie":   plan.ConfirmPrompt,
 	}
 	for id, confirm := range want {
 		if got := find(t, got, id).Confirm; got != confirm {

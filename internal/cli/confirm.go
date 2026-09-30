@@ -57,11 +57,10 @@ func (c *confirmer) Confirm(_ context.Context, task plan.Task) (bool, error) {
 // stops because the answer was unclear is recoverable; one that continues is
 // not necessarily.
 func (c *confirmer) prompt(task plan.Task) (bool, error) {
-	fmt.Fprintf(c.out, "\n%s\n", task.Title)
 	if task.Irreversible {
-		fmt.Fprintf(c.out, "the cluster is committed past this point\n")
+		fmt.Fprintf(c.out, "  the cluster is committed past this point\n")
 	}
-	fmt.Fprintf(c.out, "continue? [y/N] ")
+	fmt.Fprintf(c.out, "  continue? [y/N] ")
 
 	answer, err := c.read()
 	if err != nil {
@@ -70,29 +69,43 @@ func (c *confirmer) prompt(task plan.Task) (bool, error) {
 	return answer == "y" || answer == "yes", nil
 }
 
-// typed asks for the host's name back, so the answer cannot be given without
-// having read which host it is about.
+// typed asks for the subject of the task back, so the answer cannot be given
+// without having read what it is about.
 func (c *confirmer) typed(task plan.Task) (bool, error) {
-	want := task.Member
-	if want == "" {
-		want = task.ID
-	}
+	want := subject(task)
 
-	fmt.Fprintf(c.out, "\n%s\n", task.Title)
 	if task.Irreversible {
-		fmt.Fprintf(c.out, "the cluster is committed past this point\n")
+		fmt.Fprintf(c.out, "  the cluster is committed past this point\n")
 	}
-	fmt.Fprintf(c.out, "type %q to continue: ", want)
+	fmt.Fprintf(c.out, "  type %q to continue: ", want)
 
 	answer, err := c.read()
 	if err != nil {
 		return false, err
 	}
 	if answer != strings.ToLower(want) {
-		fmt.Fprintf(c.out, "that is not %q; stopping\n", want)
+		fmt.Fprintf(c.out, "  that is not %q; stopping\n", want)
 		return false, nil
 	}
 	return true, nil
+}
+
+// subject is what a typed confirmation asks to have typed back.
+//
+// The host, for a task that acts on one. Otherwise the version, because the
+// task that acts on the whole fleet is the pin, and the fact worth having read
+// before assenting is which version the fleet is about to converge toward.
+//
+// The id is a last resort and not a good one: typing a task's name back proves
+// nothing except that it was on the screen.
+func subject(task plan.Task) string {
+	if task.Member != "" {
+		return task.Member
+	}
+	if version, ok := task.Action.Args["version"].(string); ok && version != "" {
+		return version
+	}
+	return task.ID
 }
 
 // read takes one line, folded and trimmed.

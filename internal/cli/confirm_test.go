@@ -98,8 +98,32 @@ func TestTypedRefusesAnythingButTheName(t *testing.T) {
 	}
 }
 
-// A task acting on the cluster rather than a host has no member, so the id is
-// what has to be typed back.
+// The pin acts on the whole fleet, so it names no host. What is worth having
+// read before assenting is the version, and that is what it asks for.
+func TestTypedAsksForTheVersionWhenTheTaskNamesNoHost(t *testing.T) {
+	task := plan.Task{
+		ID:      "set-version-pin",
+		Title:   "Pin nomad to 2.0.7",
+		Confirm: plan.ConfirmTyped,
+		Action:  plan.Action{Args: map[string]any{"version": "2.0.7"}},
+	}
+
+	ok, out := ask(t, task, "2.0.7\n")
+	if !ok {
+		t.Error("the version was not taken as assent")
+	}
+	if !strings.Contains(out, "2.0.7") {
+		t.Errorf("output = %q, want it to ask for the version", out)
+	}
+
+	// The task id is on the screen either way; typing it back proves nothing.
+	if ok, _ := ask(t, task, "set-version-pin\n"); ok {
+		t.Error("the task id was taken as assent")
+	}
+}
+
+// A task acting on the cluster with no version either has nothing better to
+// ask for than its id.
 func TestTypedFallsBackToTheTaskIDWhenThereIsNoMember(t *testing.T) {
 	task := plan.Task{ID: "hand-off-coordination", Title: "Hand off", Confirm: plan.ConfirmTyped}
 

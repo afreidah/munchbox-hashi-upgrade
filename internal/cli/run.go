@@ -148,7 +148,9 @@ func assemble(cmd *cobra.Command, run *plan.Run, opts runOptions) (*execute.Deps
 	deps.Coordination = nomad
 	deps.Drains = nomad
 
-	gate, err := ready.New(ready.Options{Cluster: nomad})
+	// The gate reports what it is waiting for. Without somewhere to write it, a
+	// wait of up to three minutes is indistinguishable from a hang.
+	gate, err := ready.New(ready.Options{Cluster: nomad, Out: cmd.OutOrStdout()})
 	if err != nil {
 		return nil, err
 	}

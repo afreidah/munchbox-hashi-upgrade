@@ -91,6 +91,10 @@ func (r *Runner) Apply(ctx context.Context) error {
 	for {
 		task, ok := r.run.Next()
 		if !ok {
+			// Said out loud. A run whose last task simply stops printing leaves
+			// the reader deciding for themselves whether it finished or died,
+			// and the one thing they came for is that it is done.
+			r.sayf("\nevery host is on %s %s\n", r.run.Spec.Tool, r.run.Spec.To)
 			return nil
 		}
 
@@ -128,6 +132,10 @@ func (r *Runner) Task(ctx context.Context, id string) error {
 		return fmt.Errorf("%w: %s names %q", ErrNoStep, task.ID, task.Action.Command)
 	}
 
+	// Announced before it is put to the operator, so a prompt follows the name
+	// of what it is about rather than repeating it.
+	r.sayf("%s\n", task.Title)
+
 	if task.Confirm != plan.ConfirmNone {
 		assented, err := r.confirm.Confirm(ctx, *task)
 		if err != nil {
@@ -138,8 +146,6 @@ func (r *Runner) Task(ctx context.Context, id string) error {
 			return ErrDeclined
 		}
 	}
-
-	r.sayf("%s\n", task.Title)
 
 	r.run.Begin(task.ID, r.now())
 	if err := r.run.Save(); err != nil {
