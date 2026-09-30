@@ -89,6 +89,33 @@ func (g *Gate) Client(ctx context.Context, name, target string) error {
 	})
 }
 
+// Coordination waits until a named host is no longer the one coordinating.
+//
+// The transfer request returns once raft has accepted it, not once the election
+// has finished, so the run would otherwise restart the old leader while it
+// still held the term. Which host took over is not asserted: raft chooses among
+// the voters and any of them is a valid outcome.
+func (g *Gate) Coordination(ctx context.Context, from string) error {
+	what := fmt.Sprintf("coordination moving off %s", from)
+
+	return g.await(ctx, what, func(cluster plan.Cluster) error {
+		primary, ok := cluster.Primary()
+		switch {
+		// An election in progress has no primary at all. That is a step on the
+		// way rather than the end of it: the run needs someone holding the
+		// term before it restarts the host that used to.
+		case !ok:
+			return errors.New("no host is coordinating yet")
+		case primary.Name == from:
+			return fmt.Errorf("%s is still coordinating", from)
+		case !cluster.Healthy:
+			return fmt.Errorf("coordination moved to %s but the cluster is not healthy", primary.Name)
+		}
+
+		return nil
+	})
+}
+
 // Barrier waits until the cluster could absorb losing another coordinating
 // host. It runs between hosts: what a step did to the host it touched is the
 // Server gate's business, and what it did to the cluster is this one's.

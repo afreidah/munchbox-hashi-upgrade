@@ -58,19 +58,13 @@ func TestImplsAreAllRealCommands(t *testing.T) {
 	}
 }
 
-// The reverse direction, which records the one gap rather than asserting full
-// coverage: hand-off-coordination is emitted and the runner refuses it by name
-// until the Nomad client can transfer leadership.
-func TestHandoffIsTheOnlyCommandWithoutAnImplementation(t *testing.T) {
-	var missing []string
+// The other direction: a command a task can name and no step implements stops
+// a run partway, so every one steps.Build emits has to be registered here.
+func TestEveryCommandHasAnImplementation(t *testing.T) {
 	for command := range commands() {
 		if _, ok := impls[command]; !ok {
-			missing = append(missing, command)
+			t.Errorf("steps.Build emits %q, which impls does not register", command)
 		}
-	}
-
-	if len(missing) != 1 || missing[0] != steps.CommandHandoff {
-		t.Errorf("commands without an implementation = %v, want [%s]", missing, steps.CommandHandoff)
 	}
 }
 

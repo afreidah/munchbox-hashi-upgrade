@@ -31,7 +31,7 @@ import (
 	"github.com/afreidah/munchbox-hashi-upgrade/internal/steps"
 )
 
-//go:generate mockgen -destination=mock_generated_test.go -package=execute github.com/afreidah/munchbox-hashi-upgrade/internal/execute Pinner,Fleeter,Surveyor,Waiter
+//go:generate mockgen -destination=mock_generated_test.go -package=execute github.com/afreidah/munchbox-hashi-upgrade/internal/execute Pinner,Fleeter,Surveyor,Waiter,Coordinator
 
 // -------------------------------------------------------------------------
 // WHAT A STEP NEEDS
@@ -59,9 +59,19 @@ type Surveyor interface {
 
 // Waiter blocks until the cluster has taken a host back. Server is the
 // stronger condition of the two: rejoining the quorum, not merely answering.
+// Coordination waits the other way, for a host to stop being the one that
+// coordinates.
 type Waiter interface {
 	Server(ctx context.Context, name, target string, restarted time.Time) error
 	Client(ctx context.Context, name, target string) error
+	Coordination(ctx context.Context, from string) error
+}
+
+// Coordinator moves coordination between servers. Separate from Surveyor
+// because reading a cluster and changing which host leads it are different
+// permissions, and only one step needs the second.
+type Coordinator interface {
+	Handoff(ctx context.Context, id string) error
 }
 
 // -------------------------------------------------------------------------
@@ -96,15 +106,16 @@ const (
 // Hosts is every host in the survey, for the tasks that act on the fleet
 // rather than on one member and so have no member name to resolve.
 type Deps struct {
-	Run      *plan.Run
-	Versions Pinner
-	Fleet    Fleeter
-	Survey   Surveyor
-	Wait     Waiter
-	Target   func(member string) (ssh.Target, error)
-	Hosts    []ssh.Target
-	Out      io.Writer
-	Mode     Mode
+	Run          *plan.Run
+	Versions     Pinner
+	Fleet        Fleeter
+	Survey       Surveyor
+	Wait         Waiter
+	Coordination Coordinator
+	Target       func(member string) (ssh.Target, error)
+	Hosts        []ssh.Target
+	Out          io.Writer
+	Mode         Mode
 }
 
 // -------------------------------------------------------------------------
@@ -127,6 +138,7 @@ var impls = map[string]impl{
 	steps.CommandFreeze:  {build: freeze, readOnly: false},
 	steps.CommandPin:     {build: pin, readOnly: false},
 	steps.CommandUpgrade: {build: upgrade, readOnly: false},
+	steps.CommandHandoff: {build: handoff, readOnly: false},
 	steps.CommandVerify:  {build: verify, readOnly: true},
 	steps.CommandThaw:    {build: thaw, readOnly: false},
 }

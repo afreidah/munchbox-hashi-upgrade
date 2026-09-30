@@ -153,11 +153,11 @@ func TestNoOpWorksThroughTheFileAndRecordsProgress(t *testing.T) {
 // stepped over, which is the difference between a run that reports what it did
 // not do and one that claims a cluster it never touched.
 func TestARunRefusesACommandWithNoImplementation(t *testing.T) {
-	body := runFile + `    - id: hand-off-coordination
-      title: Move coordination
+	body := runFile + `    - id: from-a-later-build
+      title: Something this build does not know how to do
       stage: servers
       action:
-        command: hand-off-coordination
+        command: reticulate-splines
       confirm: none
 `
 
@@ -165,7 +165,7 @@ func TestARunRefusesACommandWithNoImplementation(t *testing.T) {
 	if err == nil {
 		t.Fatalf("a run with an unimplemented command succeeded\n%s", out)
 	}
-	if !strings.Contains(err.Error(), "hand-off-coordination") {
+	if !strings.Contains(err.Error(), "reticulate-splines") {
 		t.Errorf("err = %v, want it to name the command", err)
 	}
 }
