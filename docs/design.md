@@ -18,13 +18,18 @@ This tool is that sequence, written down and driven.
 
 ## What it is
 
-Two commands.
+Three commands.
 
 `plan` reads the cluster and writes a run file. It changes nothing: no pin, no
 timer, no host. Everything that alters anything is a task *in* the file it
 produces.
 
 `run` carries out a run file, recording the outcome of every task back into it.
+It resumes, so a run that stopped is continued by naming the same file.
+
+`status` reads a run file and reports it. No cluster, no credentials, no
+change: a run that stopped in the night is read before deciding what to do
+about it, and reading it should not require the ability to act on it.
 
 The separation is the point. A plan can be read, questioned and kept before
 anything happens, and the thing that is reviewed is the thing that runs.
@@ -137,8 +142,13 @@ not use them would put it behind a wall of flags.
 `active` is what an interrupt leaves behind: whether the task took effect is
 unknown, so a resumed run lands on it rather than retrying blind. `failed` is
 deliberately not settled either -- a resumed run stops on the failure instead
-of stepping over it. Both want an operator looking at the host, and both can
-be driven on their own once that has happened.
+of stepping over it.
+
+Both want an operator looking at the host first. `status` says which task and
+why; `run --reset <task-id>` then forgets that task's record so the run reaches
+it again. Naming it is the point: the run will not decide for itself that a
+half-done converge is safe to repeat, and the operator saying so explicitly is
+the difference between a retry and a guess.
 
 ## Confirmation and interruption
 
@@ -240,7 +250,8 @@ which a unit test could have:
 - Every wait is on the cluster's own verdict, with a timeout that names the
   condition it gave up on.
 - The file is written after every task, so an interrupted run is resumed rather
-  than restarted.
+  than restarted, and a task that failed is not stepped over without a person
+  naming it.
 - A failure stops the run and unwinds orchestration state in reverse. Versions
   are never reversed.
 - A task whose command has no implementation is refused by name rather than

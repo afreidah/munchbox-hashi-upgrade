@@ -14,7 +14,15 @@ every task, so a run that stops for any reason is resumed by naming it again.
 ```
 hashi-upgrade plan nomad --to 2.0.7     # survey, and write a run file
 hashi-upgrade run nomad-*.yaml          # carry it out
+hashi-upgrade status nomad-*.yaml       # read where it got to
 ```
+
+`run` resumes: it starts from the first task that has not settled, so a run
+that stopped is continued by naming the same file again. It will not step over
+a task that failed or never reported back -- whether that one took effect is
+exactly what is unknown -- so `status` says what happened and
+`run --reset <task-id>` puts it back into play once the host has been looked
+at.
 
 See [docs/design.md](docs/design.md) for why it is shaped this way.
 
