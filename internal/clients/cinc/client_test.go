@@ -1,12 +1,12 @@
 // -------------------------------------------------------------------------------
-// CINC Client Tests - Construction, and the Server the Pin Tests Run Against
+// CINC Client Tests - Construction
 //
 // Author: Alex Freidah
 //
-// Covers construction, and provides the stub configuration server the pin tests
-// use. Request signing happens on the client, so a plain HTTP server is enough
-// to exercise the calls; the library's own test helper lives under internal/
-// and cannot be imported.
+// Construction performs no I/O, so every case here is about what it refuses:
+// a URL naming no organization, a missing identity, a key that will not parse.
+// What the client then does against a server is covered against a real one in
+// pin_test.go.
 // -------------------------------------------------------------------------------
 
 package cinc
@@ -15,14 +15,9 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
-	"encoding/json"
 	"encoding/pem"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
-	"sync"
 	"testing"
 )
 
@@ -49,96 +44,6 @@ func writeTemp(t *testing.T, name string, data []byte) string {
 		t.Fatalf("write %s: %v", name, err)
 	}
 	return path
-}
-
-// reply is the answer the stub server gives one request.
-type reply struct {
-	status int
-	body   any
-}
-
-// stub is a configuration server that answers the data bag endpoints from a
-// table and records what it was asked.
-type stub struct {
-	server  *httptest.Server
-	replies map[string]reply
-
-	mu   sync.Mutex
-	seen []string
-	sent []map[string]any
-}
-
-// serve starts a stub server. Keys in replies are "METHOD /trailing/path",
-// where the path is what follows the organization prefix.
-func serve(t *testing.T, replies map[string]reply) *stub {
-	t.Helper()
-	s := &stub{replies: replies}
-	s.server = httptest.NewServer(http.HandlerFunc(s.handle))
-	t.Cleanup(s.server.Close)
-	return s
-}
-
-// handle answers one request from the table, defaulting to 404 so an
-// unconfigured path exercises the not-found paths rather than hanging.
-func (s *stub) handle(w http.ResponseWriter, r *http.Request) {
-	path := r.URL.Path
-	if i := strings.Index(path, "/data"); i >= 0 {
-		path = path[i:]
-	}
-	key := r.Method + " " + path
-
-	s.mu.Lock()
-	s.seen = append(s.seen, key)
-	var body map[string]any
-	if r.Body != nil {
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		if body != nil {
-			s.sent = append(s.sent, body)
-		}
-	}
-	s.mu.Unlock()
-
-	w.Header().Set("X-Ops-Server-API-Version", `{"min_version":"0","max_version":"2"}`)
-	w.Header().Set("Content-Type", "application/json")
-
-	rep, ok := s.replies[key]
-	if !ok {
-		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(map[string]any{"error": []string{"not found"}})
-		return
-	}
-	w.WriteHeader(rep.status)
-	if rep.body != nil {
-		_ = json.NewEncoder(w).Encode(rep.body)
-	}
-}
-
-// requests returns the requests the server was asked, in order.
-func (s *stub) requests() []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return append([]string(nil), s.seen...)
-}
-
-// bodies returns the JSON bodies the server was sent, in order.
-func (s *stub) bodies() []map[string]any {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return append([]map[string]any(nil), s.sent...)
-}
-
-// client builds a client pointed at the stub server.
-func (s *stub) client(t *testing.T) *Cinc {
-	t.Helper()
-	c, err := New(Options{
-		ServerURL:  s.server.URL + "/organizations/munchbox",
-		ClientName: "hashi-upgrade",
-		KeyPath:    testKeyPath(t),
-	})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	return c
 }
 
 func TestNew(t *testing.T) {

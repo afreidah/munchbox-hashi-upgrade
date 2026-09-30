@@ -1,0 +1,83 @@
+#!/bin/sh
+# -------------------------------------------------------------------------------
+# cinc-client - Converge This Node Onto The Pinned Version
+#
+# Author: Alex Freidah
+#
+# Stands in for Chef. It does what the real converge does from the tool's point
+# of view: read the version pinned in the `versions` data bag, install it if the
+# running binary differs, restart the agent, and exit zero or non-zero.
+#
+# What it does not do is run a cookbook. The orchestration around a converge is
+# this repository's concern; whether a cookbook installs Nomad correctly is the
+# cookbook's, and it lives elsewhere.
+#
+# The run lock is held at the path the tool checks, so a Freeze that arrives
+# mid-converge sees what it would see on a real node.
+# -------------------------------------------------------------------------------
+
+set -eu
+
+readonly server="${CINC_SERVER:-http://cinc-server:8889/organizations/test}"
+readonly lock=/var/cinc/cache/cinc-client-running.pid
+readonly pidfile=/var/run/nomad.pid
+
+log() { printf '[cinc-client] %s\n' "$*"; }
+
+mkdir -p "$(dirname "$lock")"
+echo $$ > "$lock"
+trap 'rm -f "$lock"' EXIT INT TERM
+
+# --- The pin ---------------------------------------------------------------
+#
+# The server runs with signature verification off in this fleet, so a plain
+# read is enough. What the tool sends is signed either way; that signing is
+# covered against a server that verifies it, in the unit tests.
+
+log "reading the pin from $server"
+pinned=$(curl -fsS "$server/data/versions/nomad" | jq -r '.version // empty') || {
+  log "could not read the pin"
+  exit 1
+}
+
+if [ -z "$pinned" ]; then
+  log "no version is pinned for nomad"
+  exit 1
+fi
+
+running=$(nomad version | head -1 | sed 's/^Nomad v//')
+log "pinned $pinned, running $running"
+
+if [ "$pinned" = "$running" ]; then
+  log "already converged"
+  exit 0
+fi
+
+# --- Install ---------------------------------------------------------------
+
+readonly url="https://releases.hashicorp.com/nomad/${pinned}/nomad_${pinned}_linux_amd64.zip"
+
+log "fetching $url"
+tmp=$(mktemp -d)
+curl -fsS -o "$tmp/nomad.zip" "$url" || { log "download failed"; exit 1; }
+unzip -o -q "$tmp/nomad.zip" -d "$tmp" || { log "unzip failed"; exit 1; }
+
+install -m 0755 "$tmp/nomad" /bin/nomad
+rm -rf "$tmp"
+log "installed $(nomad version | head -1)"
+
+# --- Restart ---------------------------------------------------------------
+#
+# The supervisor brings the agent back on the new binary. Signalling it is what
+# makes a run's gates wait for something real: the host leaves the cluster and
+# has to rejoin.
+
+if [ -f "$pidfile" ]; then
+  log "restarting the agent"
+  kill "$(cat "$pidfile")" 2>/dev/null || true
+else
+  log "no agent pid file; nothing to restart"
+  exit 1
+fi
+
+log "converge complete"

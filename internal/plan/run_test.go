@@ -95,6 +95,38 @@ func TestRunNext_LandsOnFailure(t *testing.T) {
 	}
 }
 
+// Reset is how a task a run refused to step over is put back into play, once
+// an operator has looked at the host.
+func TestRunReset(t *testing.T) {
+	now := time.Now().UTC()
+	r := plan.Create("", "test", plan.Spec{}, plan.Cluster{}, tasks("a", "b", "c"))
+	r.Settle("a", plan.Succeeded, now, nil)
+	r.Settle("b", plan.Failed, now, errors.New("converge failed"))
+
+	if !r.Reset("b") {
+		t.Error("Reset reported nothing to forget")
+	}
+	if got := r.Outcome("b"); got != plan.Waiting {
+		t.Errorf("outcome = %q, want %q", got, plan.Waiting)
+	}
+
+	// The run reaches it again rather than landing on it.
+	next, ok := r.Next()
+	if !ok || next.ID != "b" {
+		t.Fatalf("Next() = %v, want b", next)
+	}
+
+	// Reported, so a caller can tell a task it put back from one that never ran.
+	if r.Reset("b") {
+		t.Error("Reset reported something to forget twice")
+	}
+
+	// What succeeded before is untouched.
+	if got := r.Outcome("a"); got != plan.Succeeded {
+		t.Errorf("a outcome = %q, want it left alone", got)
+	}
+}
+
 // An interrupt leaves a task Active. A resumed run must stop there, because
 // whether the work took effect is exactly what is unknown.
 func TestRunNext_LandsOnActive(t *testing.T) {

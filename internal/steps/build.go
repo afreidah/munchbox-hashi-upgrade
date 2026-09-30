@@ -60,8 +60,11 @@ func Build(spec plan.Spec, cluster plan.Cluster) []plan.Task {
 	tasks := make([]plan.Task, 0, len(servers)+len(clients)+5)
 	tasks = append(tasks, freezeTask(), pinTask(spec))
 	tasks = append(tasks, serverTasks(spec, servers)...)
+	// Confirmed like the servers. Restarting a client costs the cluster no
+	// fault tolerance, but it does interrupt the work running on it, and a host
+	// that restarts with nobody watching is one nobody notices failing.
 	for _, c := range clients {
-		tasks = append(tasks, upgradeTask(spec, c, plan.StageClients, plan.ConfirmNone))
+		tasks = append(tasks, upgradeTask(spec, c, plan.StageClients, plan.ConfirmPrompt))
 	}
 	return append(tasks, verifyTask(spec), thawTask())
 }

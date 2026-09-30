@@ -11,6 +11,10 @@ coverage.html
 .vscode/
 .claude/
 
-# Generated plans land in the working directory by design; they record cluster
-# topology and are per-run state, not source.
-*-upgrade-*.yaml
+# Generated run files land in the working directory by design; they record
+# cluster topology and are per-run state, not source. The pattern follows what
+# runFilename builds -- <tool>[-<cluster>]-<timestamp>.yaml -- which carries no
+# fixed word to match on, so the tools are listed.
+nomad-*.yaml
+consul-*.yaml
+vault-*.yaml

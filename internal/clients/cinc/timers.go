@@ -107,11 +107,9 @@ func (f *Fleet) each(ctx context.Context, targets []ssh.Target, fn func(context.
 
 	var wg sync.WaitGroup
 	for i, target := range targets {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			errs[i] = f.on(ctx, target, fn)
-		}()
+		})
 	}
 	wg.Wait()
 

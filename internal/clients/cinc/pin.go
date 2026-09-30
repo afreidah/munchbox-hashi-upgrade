@@ -56,6 +56,26 @@ func (c *Cinc) Pin(ctx context.Context, tool string) (string, error) {
 	return version, nil
 }
 
+// ClearPin removes tool's pin entirely.
+//
+// This is how a run puts back a pin that was not there before it ran. Writing
+// an empty version would not do it: nothing reads an item with no version and a
+// converge against one fails, so an absent pin and a blank one are different
+// states and only the absent one is where a first upgrade started.
+//
+// An item that is already gone is the wanted state, not a failure.
+func (c *Cinc) ClearPin(ctx context.Context, tool string) error {
+	if tool == "" {
+		return errors.New("tool is required")
+	}
+
+	_, err := c.client.DataBags.Items(versionsBag).Delete(ctx, tool)
+	if err != nil && !errors.Is(err, cinc.ErrNotFound) {
+		return fmt.Errorf("delete %s/%s from %s: %w", versionsBag, tool, c.server, err)
+	}
+	return nil
+}
+
 // SetPin records the version tool is to be installed at, creating the bag and
 // the item when they are not there yet.
 //
