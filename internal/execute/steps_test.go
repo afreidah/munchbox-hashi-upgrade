@@ -182,9 +182,9 @@ func run() *plan.Run {
 	return &plan.Run{
 		Spec: plan.Spec{Tool: plan.Nomad, To: "2.0.6"},
 		Cluster: plan.Cluster{Members: []plan.Member{
-			{Name: "server-a", Kind: plan.KindServer, Version: "2.0.5"},
-			{Name: "client-a", Kind: plan.KindClient, Version: "2.0.5"},
-			{Name: "done-a", Kind: plan.KindClient, Version: "2.0.6"},
+			{ID: "id-server-a", Name: "server-a", Kind: plan.KindServer, Version: "2.0.5"},
+			{ID: "id-client-a", Name: "client-a", Kind: plan.KindClient, Version: "2.0.5"},
+			{ID: "id-done-a", Name: "done-a", Kind: plan.KindClient, Version: "2.0.6"},
 		}},
 	}
 }

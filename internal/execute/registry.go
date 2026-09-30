@@ -31,7 +31,7 @@ import (
 	"github.com/afreidah/munchbox-hashi-upgrade/internal/steps"
 )
 
-//go:generate mockgen -destination=mock_generated_test.go -package=execute github.com/afreidah/munchbox-hashi-upgrade/internal/execute Pinner,Fleeter,Surveyor,Waiter,Coordinator
+//go:generate mockgen -destination=mock_generated_test.go -package=execute github.com/afreidah/munchbox-hashi-upgrade/internal/execute Pinner,Fleeter,Surveyor,Waiter,Coordinator,Drainer
 
 // -------------------------------------------------------------------------
 // WHAT A STEP NEEDS
@@ -74,6 +74,13 @@ type Coordinator interface {
 	Handoff(ctx context.Context, id string) error
 }
 
+// Drainer empties a host of work and puts it back in service. Only reached
+// when the run asked to drain, which is off by default.
+type Drainer interface {
+	Drain(ctx context.Context, id string, deadline time.Duration) error
+	Undrain(ctx context.Context, id string) error
+}
+
 // -------------------------------------------------------------------------
 // MODE
 // -------------------------------------------------------------------------
@@ -112,6 +119,7 @@ type Deps struct {
 	Survey       Surveyor
 	Wait         Waiter
 	Coordination Coordinator
+	Drains       Drainer
 	Target       func(member string) (ssh.Target, error)
 	Hosts        []ssh.Target
 	Out          io.Writer

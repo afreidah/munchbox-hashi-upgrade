@@ -146,6 +146,7 @@ func assemble(cmd *cobra.Command, run *plan.Run, opts runOptions) (*execute.Deps
 	}
 	deps.Survey = nomad
 	deps.Coordination = nomad
+	deps.Drains = nomad
 
 	gate, err := ready.New(ready.Options{Cluster: nomad})
 	if err != nil {
