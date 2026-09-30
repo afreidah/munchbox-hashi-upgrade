@@ -122,9 +122,13 @@ func summarise(run *plan.Run) string {
 	var b strings.Builder
 
 	fmt.Fprintf(&b, "%s\n\n", run.Path())
-	fmt.Fprintf(&b, "%s: %d hosts, %d server failures tolerated\n",
-		cmp.Or(run.Cluster.Name, "unnamed cluster"), len(run.Cluster.Members), run.Cluster.Tolerance)
+	fmt.Fprintf(&b, "%s: %s, %s tolerated\n",
+		cmp.Or(run.Cluster.Name, "unnamed cluster"),
+		count(len(run.Cluster.Members), "host"),
+		count(run.Cluster.Tolerance, "server failure"))
 	fmt.Fprintf(&b, "upgrading %s to %s\n\n", run.Spec.Tool, run.Spec.To)
+	b.WriteString(topology(run))
+	b.WriteString("\n")
 
 	var stage plan.Stage
 	for _, task := range run.Tasks {
@@ -135,6 +139,78 @@ func summarise(run *plan.Run) string {
 		fmt.Fprintf(&b, "  %s%s\n", task.Title, annotation(task))
 	}
 	return b.String()
+}
+
+// count renders a quantity with its noun, pluralised. Only ever reads one
+// summary line, so the naive rule is enough for the nouns it is given.
+func count(n int, noun string) string {
+	if n == 1 {
+		return fmt.Sprintf("%d %s", n, noun)
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
+}
+
+// topology renders what the survey found, so the plan states the cluster it
+// was generated against and not only what it intends to do. Without it the
+// task list names hosts the reader has to take on trust, and the numbers the
+// ordering was derived from -- who coordinates, who is a voter, who is already
+// upgraded -- are in the file and nowhere in front of them.
+//
+// Members arrive sorted servers-first, so the grouping follows the order
+// rather than reordering anything.
+func topology(run *plan.Run) string {
+	var b strings.Builder
+
+	var width int
+	for _, m := range run.Cluster.Members {
+		width = max(width, len(m.Name))
+	}
+
+	var kind plan.Kind
+	for _, m := range run.Cluster.Members {
+		if m.Kind != kind {
+			kind = m.Kind
+			fmt.Fprintf(&b, "%ss\n", kind)
+		}
+
+		fmt.Fprintf(&b, "  %-*s  %-8s", width, m.Name, cmp.Or(m.Version, "unknown"))
+		if notes := condition(m, run.Spec.To); len(notes) > 0 {
+			fmt.Fprintf(&b, "  %s", strings.Join(notes, ", "))
+		}
+		b.WriteString("\n")
+	}
+
+	return b.String()
+}
+
+// condition names what is worth saying about a host beyond its version.
+//
+// Silence means ordinary: healthy, a voter if it coordinates, eligible if it
+// carries work. Only the departures are printed, so a fleet that is fine reads
+// as one.
+func condition(m plan.Member, target string) []string {
+	var out []string
+
+	if m.Primary {
+		out = append(out, "coordinating")
+	}
+	if m.Kind == plan.KindServer && !m.Voter {
+		out = append(out, "not a voter")
+	}
+	if !m.Healthy {
+		out = append(out, cmp.Or(m.Status, "unhealthy"))
+	}
+	if m.Kind == plan.KindClient && !m.Eligible {
+		out = append(out, "not accepting work")
+	}
+
+	// The hosts a run will pass over. Worth stating up front: a plan whose
+	// hosts are already upgraded does far less than its task list suggests.
+	if m.Version == target {
+		out = append(out, "already at "+target)
+	}
+
+	return out
 }
 
 // annotation marks the tasks that do not simply run: the ones that stop for an

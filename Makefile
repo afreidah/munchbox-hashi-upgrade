@@ -96,10 +96,46 @@ coverage: ## Generate coverage.out from unit tests (mirrors the CI test job)
 	go tool cover -html=coverage.out -o coverage.html
 	@go tool cover -func=coverage.out | tail -1
 
+# The integration tier runs Nomad in containers, so it needs Docker and a few
+# minutes rather than a few seconds. Its profile is written separately and
+# merged by the coverage dashboard: a line is covered whichever tier reached
+# it, and much of the client packages is only reachable against a real cluster.
+INTEGRATION_COVER_FLAGS := -race -v -tags integration -count=1 -timeout 15m \
+	-coverprofile=integration-coverage.out -covermode=atomic -coverpkg=./...
+
+integration-test: ## Run the integration tests (requires Docker)
+	go test -race -v -tags integration -count=1 -timeout 15m ./internal/integration/
+
+integration-coverage: ## Generate integration-coverage.out (requires Docker)
+	go test $(INTEGRATION_COVER_FLAGS) ./internal/integration/
+	@go tool cover -func=integration-coverage.out | tail -1
+
+##@ Test cluster
+
+COMPOSE := docker compose -f docker-compose.test.yml
+CLUSTER_ADDR := http://127.0.0.1:4646
+
+# The version the fleet starts on, behind whatever you then plan toward. A
+# cluster already at the target plans a run whose every task is a no-op.
+FROM_VERSION ?= 2.0.5
+
+cluster-up: ## Start a local Nomad fleet (3 servers, 2 clients) on FROM_VERSION
+	# --remove-orphans: a service renamed between versions of this file leaves a
+	# container compose no longer knows about, still holding the published port.
+	FROM_VERSION=$(FROM_VERSION) $(COMPOSE) up -d --wait --remove-orphans
+	@printf '\nfleet is on %s\nexport NOMAD_ADDR=%s\n\n' '$(FROM_VERSION)' '$(CLUSTER_ADDR)'
+	@NOMAD_ADDR=$(CLUSTER_ADDR) nomad server members 2>/dev/null || true
+
+cluster-down: ## Stop the local fleet and discard its state
+	FROM_VERSION=$(FROM_VERSION) $(COMPOSE) down -v --remove-orphans
+
+cluster-logs: ## Follow the local fleet's logs
+	FROM_VERSION=$(FROM_VERSION) $(COMPOSE) logs -f
+
 ##@ Housekeeping
 
 clean: ## Remove build artifacts
-	rm -f $(BINARY) coverage.out coverage.html
+	rm -f $(BINARY) coverage.out coverage.html integration-coverage.out
 
-.PHONY: help build install uninstall generate strip-mock-package-docs test test-fast vet lint fmt govulncheck check coverage clean
+.PHONY: help build install uninstall generate strip-mock-package-docs test test-fast vet lint fmt govulncheck check coverage integration-test integration-coverage cluster-up cluster-down cluster-logs clean
 .DEFAULT_GOAL := help

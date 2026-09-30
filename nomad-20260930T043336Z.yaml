@@ -1,0 +1,155 @@
+schema: 1
+built_by: 8fe7ba7-dirty
+created_at: 2026-09-30T04:33:36.405455542Z
+spec:
+    tool: nomad
+    to: 2.0.7
+cluster:
+    surveyed_at: 2026-09-30T04:33:36.405034725Z
+    tolerance: 0
+    healthy: true
+    members:
+        - id: 59a2ecdb-98db-2f6e-eb90-555c2a06cf19
+          name: d0cf8b255b40
+          addr: 172.20.0.2
+          kind: server
+          version: 2.0.7
+          status: alive
+          primary: true
+          voter: true
+          healthy: true
+          stable_since: 2026-09-30T04:32:55Z
+        - id: 893d06c3-7875-f176-7af3-27e6439f0096
+          name: 623baaba9422
+          addr: 172.20.0.4
+          kind: client
+          version: 2.0.7
+          status: ready
+          healthy: true
+          eligible: true
+        - id: d663d841-b78a-3b8f-5d9d-72391f2e0626
+          name: f87ecb9ccb92
+          addr: 172.20.0.3
+          kind: client
+          version: 2.0.7
+          status: ready
+          healthy: true
+          eligible: true
+tasks:
+    - id: freeze-converge-timers
+      title: Stop scheduled converges across the fleet
+      stage: survey
+      action:
+        command: freeze-converge
+      confirm: prompt
+      checks:
+        converge_running: false
+        timers_stopped: true
+    - id: set-version-pin
+      title: Pin nomad to 2.0.7
+      stage: survey
+      action:
+        command: set-version-pin
+        args:
+            tool: nomad
+            version: 2.0.7
+      confirm: typed
+      checks:
+        pin: 2.0.7
+    - id: hand-off-coordination
+      title: Hand coordination off d0cf8b255b40
+      stage: servers
+      member: d0cf8b255b40
+      action:
+        command: hand-off-coordination
+        args:
+            from: d0cf8b255b40
+      confirm: typed
+      irreversible: true
+      checks:
+        primary: false
+    - id: upgrade-d0cf8b255b40
+      title: Upgrade d0cf8b255b40 to 2.0.7
+      stage: servers
+      member: d0cf8b255b40
+      action:
+        command: upgrade-member
+        args:
+            member: d0cf8b255b40
+      confirm: typed
+      checks:
+        version: 2.0.7
+    - id: upgrade-623baaba9422
+      title: Upgrade 623baaba9422 to 2.0.7
+      stage: clients
+      member: 623baaba9422
+      action:
+        command: upgrade-member
+        args:
+            member: 623baaba9422
+      confirm: none
+      checks:
+        version: 2.0.7
+    - id: upgrade-f87ecb9ccb92
+      title: Upgrade f87ecb9ccb92 to 2.0.7
+      stage: clients
+      member: f87ecb9ccb92
+      action:
+        command: upgrade-member
+        args:
+            member: f87ecb9ccb92
+      confirm: none
+      checks:
+        version: 2.0.7
+    - id: verify-cluster
+      title: Confirm the fleet is running 2.0.7
+      stage: verify
+      action:
+        command: verify-cluster
+        args:
+            version: 2.0.7
+      confirm: none
+      checks:
+        healthy: true
+        version: 2.0.7
+    - id: thaw-converge-timers
+      title: Restore scheduled converges across the fleet
+      stage: verify
+      action:
+        command: thaw-converge
+      confirm: none
+      checks:
+        timers_stopped: false
+progress:
+    freeze-converge-timers:
+        outcome: unnecessary
+        started_at: 2026-09-30T04:34:21.692795941Z
+        finished_at: 2026-09-30T04:34:21.694308531Z
+    hand-off-coordination:
+        outcome: unnecessary
+        started_at: 2026-09-30T04:34:21.696692861Z
+        finished_at: 2026-09-30T04:34:21.697482779Z
+    set-version-pin:
+        outcome: unnecessary
+        started_at: 2026-09-30T04:34:21.695155155Z
+        finished_at: 2026-09-30T04:34:21.695924163Z
+    thaw-converge-timers:
+        outcome: unnecessary
+        started_at: 2026-09-30T04:34:21.70826985Z
+        finished_at: 2026-09-30T04:34:21.709187497Z
+    upgrade-623baaba9422:
+        outcome: unnecessary
+        started_at: 2026-09-30T04:34:21.700102387Z
+        finished_at: 2026-09-30T04:34:21.700102387Z
+    upgrade-d0cf8b255b40:
+        outcome: unnecessary
+        started_at: 2026-09-30T04:34:21.698239274Z
+        finished_at: 2026-09-30T04:34:21.700478564Z
+    upgrade-f87ecb9ccb92:
+        outcome: unnecessary
+        started_at: 2026-09-30T04:34:21.700102387Z
+        finished_at: 2026-09-30T04:34:21.700102387Z
+    verify-cluster:
+        outcome: unnecessary
+        started_at: 2026-09-30T04:34:21.704102493Z
+        finished_at: 2026-09-30T04:34:21.704102493Z
