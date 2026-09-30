@@ -86,6 +86,13 @@ func New(opts Options) (*Gate, error) {
 // five-second poll buries the run it is reporting on.
 const briefly = 120
 
+// sayf reports progress. A write that fails is discarded: the gate's business
+// is the cluster, and failing a run because its narration could not be printed
+// would be the wrong thing to stop for.
+func (g *Gate) sayf(format string, args ...any) {
+	_, _ = fmt.Fprintf(g.out, format, args...)
+}
+
 // brief shortens a reason to something that fits a line.
 func brief(reason string) string {
 	if len(reason) <= briefly {
@@ -112,7 +119,7 @@ func (g *Gate) await(ctx context.Context, what, arrived string, assert func(plan
 	// The context is checked before each read rather than only after one. A
 	// cancelled caller has abandoned the run, and a condition that happens to
 	// pass on the way out is not permission to move to the next host.
-	fmt.Fprintf(g.out, "  waiting for %s\n", what)
+	g.sayf("  waiting for %s\n", what)
 	began := time.Now()
 
 	// Reported only when it changes. The same objection every five seconds is
@@ -134,14 +141,14 @@ func (g *Gate) await(ctx context.Context, what, arrived string, assert func(plan
 			unmet = err
 		default:
 			if unmet = assert(cluster); unmet == nil {
-				fmt.Fprintf(g.out, "    %s (%s)\n", arrived, time.Since(began).Round(time.Second))
+				g.sayf("    %s (%s)\n", arrived, time.Since(began).Round(time.Second))
 				return nil
 			}
 		}
 
 		if unmet != nil && unmet.Error() != said {
 			said = unmet.Error()
-			fmt.Fprintf(g.out, "    %s\n", brief(said))
+			g.sayf("    %s\n", brief(said))
 		}
 
 		select {

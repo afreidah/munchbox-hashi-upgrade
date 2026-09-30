@@ -13,10 +13,12 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/afreidah/munchbox-hashi-upgrade/internal/execute"
 	"github.com/afreidah/munchbox-hashi-upgrade/internal/plan"
@@ -167,6 +169,62 @@ func TestARunRefusesACommandWithNoImplementation(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "reticulate-splines") {
 		t.Errorf("err = %v, want it to name the command", err)
+	}
+}
+
+// -------------------------------------------------------------------------
+// RESETTING A TASK
+// -------------------------------------------------------------------------
+
+// A run refuses to step over a task that failed, and --reset is how an
+// operator who has looked at the host puts it back into play.
+func TestResetPutsATaskBackIntoPlay(t *testing.T) {
+	path := written(t, runFile)
+
+	// Settle both tasks, then fail the second, which is what a run that broke
+	// on the pin would have left behind.
+	if _, err := execRun(t, "--no-op", path); err != nil {
+		t.Fatalf("first pass: %v", err)
+	}
+
+	run, err := plan.Open(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	run.Settle("set-version-pin", plan.Failed, time.Now().UTC(), errors.New("boom"))
+	if err := run.Save(); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	// Without the reset the run lands on the failure and says so.
+	out, err := execRun(t, "--no-op", path)
+	if err == nil {
+		t.Fatalf("a run stepped over a failed task\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "--reset set-version-pin") {
+		t.Errorf("err = %v, want it to name the command that resolves it", err)
+	}
+
+	// With it, the task is reached again and the run finishes.
+	if out, err := execRun(t, "--no-op", "--reset", "set-version-pin", path); err != nil {
+		t.Fatalf("run after reset: %v\n%s", err, out)
+	}
+
+	after, err := plan.Open(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	if !after.Finished() {
+		t.Error("the run did not finish after the reset")
+	}
+}
+
+// A name no task carries is a typo. Resetting nothing and carrying on would
+// look like it worked.
+func TestResetOfAnUnknownTaskIsRefused(t *testing.T) {
+	_, err := execRun(t, "--no-op", "--reset", "no-such-task", written(t, runFile))
+	if err == nil || !strings.Contains(err.Error(), "no-such-task") {
+		t.Fatalf("err = %v, want it to refuse the unknown task", err)
 	}
 }
 

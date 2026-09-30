@@ -58,9 +58,9 @@ func (c *confirmer) Confirm(_ context.Context, task plan.Task) (bool, error) {
 // not necessarily.
 func (c *confirmer) prompt(task plan.Task) (bool, error) {
 	if task.Irreversible {
-		fmt.Fprintf(c.out, "  the cluster is committed past this point\n")
+		c.sayf("  the cluster is committed past this point\n")
 	}
-	fmt.Fprintf(c.out, "  continue? [y/N] ")
+	c.sayf("  continue? [y/N] ")
 
 	answer, err := c.read()
 	if err != nil {
@@ -75,19 +75,26 @@ func (c *confirmer) typed(task plan.Task) (bool, error) {
 	want := subject(task)
 
 	if task.Irreversible {
-		fmt.Fprintf(c.out, "  the cluster is committed past this point\n")
+		c.sayf("  the cluster is committed past this point\n")
 	}
-	fmt.Fprintf(c.out, "  type %q to continue: ", want)
+	c.sayf("  type %q to continue: ", want)
 
 	answer, err := c.read()
 	if err != nil {
 		return false, err
 	}
 	if answer != strings.ToLower(want) {
-		fmt.Fprintf(c.out, "  that is not %q; stopping\n", want)
+		c.sayf("  that is not %q; stopping\n", want)
 		return false, nil
 	}
 	return true, nil
+}
+
+// sayf puts a question or a note to the operator. A write that fails is
+// discarded: the answer is read from a separate stream, and a prompt that could
+// not be printed is not a reason to fail the run rather than the read.
+func (c *confirmer) sayf(format string, args ...any) {
+	_, _ = fmt.Fprintf(c.out, format, args...)
 }
 
 // subject is what a typed confirmation asks to have typed back.

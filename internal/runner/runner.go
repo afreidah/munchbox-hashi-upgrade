@@ -102,8 +102,8 @@ func (r *Runner) Apply(ctx context.Context) error {
 		// stepped over. Whether it took effect is unknown, and the answer is an
 		// operator looking at the host, not a blind retry.
 		if outcome := r.run.Outcome(task.ID); outcome == plan.Failed || outcome == plan.Active {
-			return fmt.Errorf("%w: %s is %s; run it on its own once you have checked the host",
-				ErrUnsettled, task.ID, outcome)
+			return fmt.Errorf("%w: %s is %s; check the host, then run again with --reset %s",
+				ErrUnsettled, task.ID, outcome, task.ID)
 		}
 
 		if err := r.Task(ctx, task.ID); err != nil {

@@ -333,6 +333,25 @@ func (r *Run) Settle(id string, outcome Outcome, at time.Time, err error) {
 	r.Progress[id] = rec
 }
 
+// Reset forgets what happened to a task, so a run reaches it again as though
+// it had not been tried.
+//
+// This is how a failed or interrupted task is put back into play. A run refuses
+// to step over one, because whether it took effect is unknown and the answer is
+// an operator looking at the host -- so the record is cleared deliberately,
+// once they have, rather than by a retry that decides for them.
+//
+// Reports whether there was anything to forget, which tells a caller naming a
+// task apart from one naming a task that had not run.
+func (r *Run) Reset(id string) bool {
+	if _, ok := r.Progress[id]; !ok {
+		return false
+	}
+
+	delete(r.Progress, id)
+	return true
+}
+
 // record returns the existing record for a task, or a blank one, initialising
 // the map so a run built without progress can still be written to.
 func (r *Run) record(id string) Record {

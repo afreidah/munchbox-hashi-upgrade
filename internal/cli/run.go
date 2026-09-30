@@ -18,6 +18,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/spf13/cobra"
 
@@ -34,6 +35,7 @@ type runOptions struct {
 	noOp   bool
 	dryRun bool
 	yes    bool
+	reset  []string
 
 	address string
 	region  string
@@ -68,6 +70,8 @@ func newRunCmd() *cobra.Command {
 	f.BoolVar(&opts.noOp, "no-op", false, "print what each task would do and change nothing")
 	f.BoolVar(&opts.dryRun, "dry-run", false, "carry out the read-only tasks for real; print the rest")
 	f.BoolVar(&opts.yes, "yes", false, "assent to every gated task without asking")
+	f.StringSliceVar(&opts.reset, "reset", nil,
+		"forget what happened to these tasks so the run reaches them again; repeatable")
 
 	f.StringVar(&opts.address, "address", "", "cluster address, overriding the environment")
 	f.StringVar(&opts.region, "region", "", "cluster region, overriding the environment")
@@ -96,6 +100,10 @@ func doRun(cmd *cobra.Command, path string, opts runOptions) error {
 		return err
 	}
 
+	if err := reset(cmd, run, opts.reset); err != nil {
+		return err
+	}
+
 	deps, err := assemble(cmd, run, opts)
 	if err != nil {
 		return err
@@ -112,6 +120,33 @@ func doRun(cmd *cobra.Command, path string, opts runOptions) error {
 	}
 
 	return r.Apply(cmd.Context())
+}
+
+// reset forgets what happened to the named tasks and saves the file, so the
+// run reaches them again.
+//
+// A run refuses to step over a task that failed or was left active, and tells
+// the operator to look at the host. This is the other half of that: once they
+// have, they name the task and it is put back into play. Saved before anything
+// else happens, so the decision survives whatever the run does next.
+//
+// A name no task carries is refused rather than ignored: it is a typo, and
+// silently resetting nothing would look like it worked.
+func reset(cmd *cobra.Command, run *plan.Run, ids []string) error {
+	for _, id := range ids {
+		if !slices.ContainsFunc(run.Tasks, func(t plan.Task) bool { return t.ID == id }) {
+			return fmt.Errorf("no task %q in %s", id, run.Path())
+		}
+
+		if run.Reset(id) {
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "forgetting %s\n", id)
+		}
+	}
+
+	if len(ids) == 0 {
+		return nil
+	}
+	return run.Save()
 }
 
 // confirmerFor returns what gated tasks are put through. --yes assents to

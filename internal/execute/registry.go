@@ -193,7 +193,7 @@ func gate(i impl, deps *Deps) runner.Step {
 // withheld and names the command, which the title does not.
 func describe(out io.Writer, task plan.Task, verb string) (runner.Result, error) {
 	if out != nil {
-		fmt.Fprintf(out, "  %s (%s)\n", verb, task.Action.Command)
+		_, _ = fmt.Fprintf(out, "  %s (%s)\n", verb, task.Action.Command)
 	}
 	return runner.Result{Outcome: plan.Unnecessary}, nil
 }
