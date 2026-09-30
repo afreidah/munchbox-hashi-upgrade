@@ -1,0 +1,59 @@
+#!/bin/sh
+# -------------------------------------------------------------------------------
+# systemctl - Enough Of It For The Timer Commands
+#
+# Author: Alex Freidah
+#
+# Freeze and Thaw disable and enable `cinc-client.timer` and ask whether it is
+# active. A container has no systemd, and running one inside this image to
+# answer two questions would cost more than it proves: what the tool depends on
+# is the exit status, not the mechanism.
+#
+# A unit is a file. Enabled means it exists.
+#
+#   disable --now <unit>   remove it, exit 0
+#   enable --now <unit>    create it, exit 0
+#   is-active <unit>       exit 0 when it exists, 3 when not, as systemd does
+#
+# Anything else exits 1 rather than pretending, so a command this stand-in does
+# not implement fails loudly instead of passing by accident.
+# -------------------------------------------------------------------------------
+
+set -eu
+
+readonly state=/var/cinc/units
+mkdir -p "$state"
+
+action="${1:-}"
+shift || true
+
+# --now is a modifier on enable and disable; the distinction it makes -- start
+# or stop the unit as well as changing whether it runs on a timer -- has no
+# meaning for a flag file.
+case "${1:-}" in
+  --now) shift ;;
+esac
+
+unit="${1:-}"
+if [ -z "$unit" ]; then
+  echo "systemctl: no unit named" >&2
+  exit 1
+fi
+
+case "$action" in
+  disable)
+    rm -f "$state/$unit"
+    ;;
+  enable)
+    : > "$state/$unit"
+    ;;
+  is-active)
+    # systemd exits 3 for a unit that is not active, which is what the tool
+    # reads to mean "already stopped" rather than "the command failed".
+    [ -f "$state/$unit" ] || exit 3
+    ;;
+  *)
+    echo "systemctl: $action is not implemented by this stand-in" >&2
+    exit 1
+    ;;
+esac

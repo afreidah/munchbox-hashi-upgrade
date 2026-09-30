@@ -1,0 +1,37 @@
+#!/bin/sh
+# -------------------------------------------------------------------------------
+# Node Entrypoint - Bring Up sshd, Then Supervise Nomad
+#
+# Author: Alex Freidah
+#
+# Nomad runs in a loop rather than as PID 1 so that installing a new binary and
+# restarting the agent does not take the container with it. That restart is the
+# whole point: the gates a run waits on are waiting for a host to go away and
+# come back, and a container that exits instead has not tested them.
+#
+# Arguments are passed through to `nomad agent`.
+# -------------------------------------------------------------------------------
+
+set -eu
+
+# Nomad's client half enables controllers by writing cgroup.subtree_control on
+# the cgroup root, which cgroup v2 refuses while any process sits directly in
+# it. Moving this shell into a child leaves the root empty.
+mkdir -p /sys/fs/cgroup/init 2>/dev/null || true
+echo 1 > /sys/fs/cgroup/init/cgroup.procs 2>/dev/null || true
+
+ssh-keygen -A >/dev/null 2>&1 || true
+/usr/sbin/sshd -e
+
+# The pid is written where the shim looks for it, so a restart is a signal
+# rather than knowledge of how the agent was started.
+readonly pidfile=/var/run/nomad.pid
+
+while true; do
+  nomad agent "$@" &
+  echo $! > "$pidfile"
+  wait $! || true
+
+  # A supervisor that restarted instantly on a misconfigured agent would spin.
+  sleep 1
+done

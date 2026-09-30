@@ -119,12 +119,39 @@ CLUSTER_ADDR := http://127.0.0.1:4646
 # cluster already at the target plans a run whose every task is a no-op.
 FROM_VERSION ?= 2.0.5
 
-cluster-up: ## Start a local Nomad fleet (3 servers, 2 clients) on FROM_VERSION
+KEYS := test/node/keys
+
+cluster-keys: $(KEYS)/user_key ## Generate the throwaway ssh material the test fleet uses
+
+# The tool will not accept a bare host key -- it verifies the host certificate
+# against a CA -- so a test fleet needs a CA of its own. One host key across
+# the fleet, and a certificate with no principals, which ssh treats as valid
+# for any hostname: the containers' addresses are assigned at start and are not
+# worth signing for individually.
+$(KEYS)/user_key:
+	@mkdir -p $(KEYS)
+	# Cleared first: the recipe writes four keys but the target tracks one, so
+	# a partial set left behind has ssh-keygen stop to ask about overwriting.
+	@rm -f $(KEYS)/host_ca* $(KEYS)/host_key* $(KEYS)/user_key* $(KEYS)/cinc_key*
+	ssh-keygen -q -t ed25519 -N '' -C host-ca -f $(KEYS)/host_ca
+	ssh-keygen -q -t ed25519 -N '' -C test-node -f $(KEYS)/host_key
+	ssh-keygen -q -s $(KEYS)/host_ca -I test-fleet -h $(KEYS)/host_key.pub
+	ssh-keygen -q -t ed25519 -N '' -C hashi-upgrade -f $(KEYS)/user_key
+	# The configuration server in this fleet verifies nothing, so what the tool
+	# signs with only has to parse. RSA because that is what the Chef scheme
+	# uses, and generated here rather than extracted from the server: writing
+	# its admin key into a mounted directory fails under a remapped user
+	# namespace, and an unverified signature makes the real key pointless.
+	ssh-keygen -q -t rsa -b 2048 -m PEM -N '' -C hashi-upgrade -f $(KEYS)/cinc_key
+	@printf '\nssh material written to %s\n' '$(KEYS)'
+
+cluster-up: cluster-keys ## Start a local Nomad fleet (3 servers, 2 clients) on FROM_VERSION
 	# --remove-orphans: a service renamed between versions of this file leaves a
 	# container compose no longer knows about, still holding the published port.
-	FROM_VERSION=$(FROM_VERSION) $(COMPOSE) up -d --wait --remove-orphans
+	FROM_VERSION=$(FROM_VERSION) $(COMPOSE) up -d --build --wait --remove-orphans
 	@printf '\nfleet is on %s\nexport NOMAD_ADDR=%s\n\n' '$(FROM_VERSION)' '$(CLUSTER_ADDR)'
 	@NOMAD_ADDR=$(CLUSTER_ADDR) nomad server members 2>/dev/null || true
+	@printf '\nnext: make cluster-plan && make cluster-run\n\n'
 
 cluster-down: ## Stop the local fleet and discard its state
 	FROM_VERSION=$(FROM_VERSION) $(COMPOSE) down -v --remove-orphans
@@ -132,10 +159,33 @@ cluster-down: ## Stop the local fleet and discard its state
 cluster-logs: ## Follow the local fleet's logs
 	FROM_VERSION=$(FROM_VERSION) $(COMPOSE) logs -f
 
+# Everything a run needs to reach the local fleet. The credentials are the
+# throwaway ones cluster-keys generates; the configuration server verifies no
+# signature, so the key it signs with only has to parse.
+CLUSTER_FLAGS := \
+	--cinc-server http://127.0.0.1:8889/organizations/test \
+	--cinc-client pivotal --cinc-key $(KEYS)/cinc_key \
+	--ssh-key $(KEYS)/user_key --ssh-host-ca $(KEYS)/host_ca.pub
+
+# The version to plan toward, ahead of FROM_VERSION so there is work to do.
+TO ?= 2.0.7
+
+# The newest run file in the working directory, which is the one plan just
+# wrote. Override to drive an older one.
+RUN_FILE ?= $(shell ls -t nomad-*.yaml 2>/dev/null | head -1)
+
+cluster-plan: build ## Survey the local fleet and write a run file (TO=<version>)
+	NOMAD_ADDR=$(CLUSTER_ADDR) ./$(BINARY) plan nomad --to $(TO)
+
+cluster-run: build ## Drive the newest run file against the local fleet (ARGS=--yes)
+	@test -n "$(RUN_FILE)" || { echo "no run file; run 'make cluster-plan' first"; exit 1; }
+	@printf 'driving %s\n\n' '$(RUN_FILE)'
+	NOMAD_ADDR=$(CLUSTER_ADDR) ./$(BINARY) run $(RUN_FILE) $(CLUSTER_FLAGS) $(ARGS)
+
 ##@ Housekeeping
 
 clean: ## Remove build artifacts
 	rm -f $(BINARY) coverage.out coverage.html integration-coverage.out
 
-.PHONY: help build install uninstall generate strip-mock-package-docs test test-fast vet lint fmt govulncheck check coverage integration-test integration-coverage cluster-up cluster-down cluster-logs clean
+.PHONY: help build install uninstall generate strip-mock-package-docs test test-fast vet lint fmt govulncheck check coverage integration-test integration-coverage cluster-keys cluster-up cluster-down cluster-logs cluster-plan cluster-run clean
 .DEFAULT_GOAL := help

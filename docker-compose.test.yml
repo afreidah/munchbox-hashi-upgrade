@@ -1,9 +1,9 @@
 # -------------------------------------------------------------------------------
-# Test Cluster - A Nomad Fleet To Drive The Tool Against By Hand
+# Test Cluster - A Fleet The Tool Can Actually Roll
 #
 # Author: Alex Freidah
 #
-# Three servers and two clients. The shape matters:
+# Three servers, two clients, and a configuration server. The shape matters:
 #
 #   three servers  tolerance of one, which the server gate requires before it
 #                  will let a run touch a coordinating host, and somewhere for
@@ -11,10 +11,12 @@
 #                  server can satisfy neither.
 #   two clients    more than one host to roll, so the client stage is a
 #                  sequence rather than a single step.
+#   cinc-server    the pin lives somewhere real, and each node reads it back
+#                  when it converges.
 #
-# The fleet starts on FROM_VERSION, which is deliberately behind the version
-# you plan toward -- a cluster already at the target plans a run whose every
-# task is a no-op, which looks like work and does none.
+# The fleet starts on FROM_VERSION, deliberately behind the version you plan
+# toward -- a cluster already at the target plans a run whose every task is a
+# no-op, which looks like work and does none.
 #
 #   make cluster-up                      start it on the default older version
 #   FROM_VERSION=2.0.4 make cluster-up   start it further back
@@ -28,61 +30,86 @@
 # discovered from the API at runtime.
 # -------------------------------------------------------------------------------
 
-x-agent: &agent
-  # Nomad's client half enables controllers by writing cgroup.subtree_control
-  # on the cgroup root, and cgroup v2 refuses that on any cgroup holding
-  # processes directly. The container's PID 1 sits in that root, so the write
-  # fails with "device or resource busy" until it is moved into a child.
-  #
-  # This is why the image warns that running clients in a container is
-  # unsupported. It is fine for a test fleet, which needs registered nodes
-  # rather than a working task runner.
-  image: hashicorp/nomad:${FROM_VERSION:-2.0.5}
-  entrypoint: ["/bin/sh", "-c"]
+x-node: &node
+  build:
+    context: ./test/node
+    args:
+      FROM_VERSION: ${FROM_VERSION:-2.0.5}
   privileged: true
   cgroup: private
   networks: [nomad]
+  environment:
+    CINC_SERVER: http://cinc-server:8889/organizations/test
+  depends_on:
+    cinc-server:
+      condition: service_started
 
 x-server: &server
-  <<: *agent
+  <<: *node
   command:
-    - >-
-      mkdir -p /sys/fs/cgroup/init &&
-      echo 1 > /sys/fs/cgroup/init/cgroup.procs 2>/dev/null;
-      exec nomad agent -server -bootstrap-expect=3
-      -bind=0.0.0.0 -data-dir=/tmp/nomad
-      -retry-join=nomad-server-1
-      -retry-join=nomad-server-2
-      -retry-join=nomad-server-3
+    - -server
+    - -bootstrap-expect=3
+    - -bind=0.0.0.0
+    - -data-dir=/tmp/nomad
+    - -retry-join=nomad-server-1
+    - -retry-join=nomad-server-2
+    - -retry-join=nomad-server-3
 
 x-client: &client
-  <<: *agent
+  <<: *node
   command:
-    - >-
-      mkdir -p /sys/fs/cgroup/init &&
-      echo 1 > /sys/fs/cgroup/init/cgroup.procs 2>/dev/null;
-      exec nomad agent -client -bind=0.0.0.0 -data-dir=/tmp/nomad
-      -servers=nomad-server-1:4647,nomad-server-2:4647,nomad-server-3:4647
+    - -client
+    - -bind=0.0.0.0
+    - -data-dir=/tmp/nomad
+    - -servers=nomad-server-1:4647,nomad-server-2:4647,nomad-server-3:4647
   volumes:
     # The docker task driver talks to the host daemon. Nothing the tool does
     # needs it; it is here so a hand-run fleet can actually place work.
     - /var/run/docker.sock:/var/run/docker.sock
-  depends_on:
-    nomad-server-1:
-      condition: service_healthy
+  healthcheck:
+    # A client that crashes is restarted by its supervisor forever, so without
+    # a check of its own it reports healthy while registering no node and the
+    # fleet silently has no client stage to roll.
+    test: ["CMD", "nomad", "operator", "api", "/v1/agent/self"]
+    interval: 2s
+    timeout: 2s
+    retries: 45
 
 services:
-  # The only agent publishing a port. A run reads the cluster through a server,
-  # and any of the three would do; exposing one keeps NOMAD_ADDR fixed.
+  # Signature verification is off so the node-side converge can read the pin
+  # with a plain request. What the tool sends is signed either way, and that
+  # signing is covered against a server that verifies it in the unit tests.
+  cinc-server:
+    build:
+      context: ./test/cinc
+    container_name: nomad-test-cinc
+    # No --key-out: the key it would write is not needed. Nothing here verifies
+    # a signature, and `make cluster-keys` generates the parseable RSA key the
+    # tool signs with. Writing into a mounted directory also fails under a
+    # remapped user namespace, whatever user the container runs as.
+    command:
+      - --addr=0.0.0.0:8889
+      - --orgs=test
+      - --no-auth
+    ports:
+      - "8889:8889"
+    networks: [nomad]
+
+  # The only Nomad agent publishing a port. A run reads the cluster through a
+  # server, and any of the three would do; exposing one keeps NOMAD_ADDR fixed.
+  # hostname is set on every agent because Nomad names a node after it, and
+  # Docker defaults it to the container id -- which makes a run's output a wall
+  # of hex with no way to tell which host is which.
   nomad-server-1:
     <<: *server
     container_name: nomad-test-server-1
+    hostname: nomad-server-1
     ports:
       - "4646:4646"
     healthcheck:
       # Answers only once the three have elected a leader, which is what
-      # `up --wait` should block on: a run against a cluster mid-election
-      # fails for reasons that have nothing to do with the tool.
+      # `up --wait` blocks on: a run against a cluster mid-election fails for
+      # reasons that have nothing to do with the tool.
       test: ["CMD", "nomad", "operator", "api", "/v1/status/leader"]
       interval: 2s
       timeout: 2s
@@ -91,18 +118,22 @@ services:
   nomad-server-2:
     <<: *server
     container_name: nomad-test-server-2
+    hostname: nomad-server-2
 
   nomad-server-3:
     <<: *server
     container_name: nomad-test-server-3
+    hostname: nomad-server-3
 
   nomad-client-1:
     <<: *client
     container_name: nomad-test-client-1
+    hostname: nomad-client-1
 
   nomad-client-2:
     <<: *client
     container_name: nomad-test-client-2
+    hostname: nomad-client-2
 
 networks:
   nomad:
