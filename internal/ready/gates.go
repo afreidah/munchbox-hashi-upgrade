@@ -1,18 +1,21 @@
 // -------------------------------------------------------------------------------
-// Assertions - Server, Client, Barrier
+// Assertions - Server, Client, Coordination, Barrier
 //
 // Author: Alex Freidah
 //
-// The three gates:
+// The gates:
 //
-//   Server   one coordinating host: right version, healthy, a voter again, and
-//            its health verdict formed after the restart rather than before it.
-//   Client   one host that carries work: right version, ready, eligible.
-//   Barrier  the cluster: healthy, every server a voter, and failure tolerance
-//            high enough to lose the next one.
+//	Server        one coordinating host: right version, healthy, voting again.
+//	Client        one host that carries work: right version, ready, eligible.
+//	Coordination  a named host no longer being the one that coordinates.
+//	Barrier       the cluster: healthy, every server a voter, and failure
+//	              tolerance high enough to lose the next one.
 //
 // Each is a plain function of one health snapshot. The polling lives in await,
 // so nothing here sleeps or retries.
+//
+// Barrier is not yet called by any step. The per-host gates cover what a step
+// did to the host it touched; the barrier is what it did to the cluster.
 // -------------------------------------------------------------------------------
 
 package ready
