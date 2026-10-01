@@ -112,12 +112,26 @@ integration-coverage: ## Generate integration-coverage.out (requires Docker)
 
 ##@ Test cluster
 
-COMPOSE := docker compose -f docker-compose.test.yml
-CLUSTER_ADDR := http://127.0.0.1:4646
+# Which fleet the cluster targets act on. One environment per tool, named for
+# it, so a Consul run never has to be aimed at a Nomad cluster by hand.
+TOOL ?= nomad
 
-# The version the fleet starts on, behind whatever you then plan toward. A
-# cluster already at the target plans a run whose every task is a no-op.
-FROM_VERSION ?= 2.0.5
+COMPOSE := docker compose -f test/compose/$(TOOL).yml
+
+# Where the published agent answers, and the version the fleet starts on --
+# behind whatever you then plan toward, since a fleet already at the target
+# plans a run whose every task is a no-op.
+ifeq ($(TOOL),consul)
+  CLUSTER_ADDR := http://127.0.0.1:8500
+  CLUSTER_ENV  := CONSUL_HTTP_ADDR
+  CINC_PORT    := 8890
+  FROM_VERSION ?= 2.0.3
+else
+  CLUSTER_ADDR := http://127.0.0.1:4646
+  CLUSTER_ENV  := NOMAD_ADDR
+  CINC_PORT    := 8889
+  FROM_VERSION ?= 2.0.5
+endif
 
 KEYS := test/node/keys
 
@@ -145,13 +159,15 @@ $(KEYS)/user_key:
 	ssh-keygen -q -t rsa -b 2048 -m PEM -N '' -C hashi-upgrade -f $(KEYS)/cinc_key
 	@printf '\nssh material written to %s\n' '$(KEYS)'
 
-cluster-up: cluster-keys ## Start a local Nomad fleet (3 servers, 2 clients) on FROM_VERSION
+cluster-up: cluster-keys ## Start a local fleet (3 servers, 2 clients) for TOOL on FROM_VERSION
 	# --remove-orphans: a service renamed between versions of this file leaves a
 	# container compose no longer knows about, still holding the published port.
 	FROM_VERSION=$(FROM_VERSION) $(COMPOSE) up -d --build --wait --remove-orphans
-	@printf '\nfleet is on %s\nexport NOMAD_ADDR=%s\n\n' '$(FROM_VERSION)' '$(CLUSTER_ADDR)'
-	@NOMAD_ADDR=$(CLUSTER_ADDR) nomad server members 2>/dev/null || true
-	@printf '\nnext: make cluster-plan && make cluster-run\n\n'
+	@printf '\n%s fleet is on %s\nexport %s=%s\n\n' \
+		'$(TOOL)' '$(FROM_VERSION)' '$(CLUSTER_ENV)' '$(CLUSTER_ADDR)'
+	@$(CLUSTER_ENV)=$(CLUSTER_ADDR) $(TOOL) members 2>/dev/null \
+		|| $(CLUSTER_ENV)=$(CLUSTER_ADDR) $(TOOL) server members 2>/dev/null || true
+	@printf '\nnext: TOOL=%s make cluster-plan && TOOL=%s make cluster-run\n\n' '$(TOOL)' '$(TOOL)'
 
 cluster-down: ## Stop the local fleet and discard its state
 	FROM_VERSION=$(FROM_VERSION) $(COMPOSE) down -v --remove-orphans
@@ -163,24 +179,30 @@ cluster-logs: ## Follow the local fleet's logs
 # throwaway ones cluster-keys generates; the configuration server verifies no
 # signature, so the key it signs with only has to parse.
 CLUSTER_FLAGS := \
-	--cinc-server http://127.0.0.1:8889/organizations/test \
+	--cinc-server http://127.0.0.1:$(CINC_PORT)/organizations/test \
 	--cinc-client pivotal --cinc-key $(KEYS)/cinc_key \
 	--ssh-key $(KEYS)/user_key --ssh-host-ca $(KEYS)/host_ca.pub
 
 # The version to plan toward, ahead of FROM_VERSION so there is work to do.
-TO ?= 2.0.7
+# Defaults mirror the fleet this tool is written for: one release ahead of
+# what it runs, so the test environment rehearses the upgrade actually faced.
+ifeq ($(TOOL),consul)
+  TO ?= 2.0.4
+else
+  TO ?= 2.0.7
+endif
 
-# The newest run file in the working directory, which is the one plan just
-# wrote. Override to drive an older one.
-RUN_FILE ?= $(shell ls -t nomad-*.yaml 2>/dev/null | head -1)
+# The newest run file this tool wrote, which is the one plan just produced.
+# Override to drive an older one.
+RUN_FILE ?= $(shell ls -t $(TOOL)-*.yaml 2>/dev/null | head -1)
 
-cluster-plan: build ## Survey the local fleet and write a run file (TO=<version>)
-	NOMAD_ADDR=$(CLUSTER_ADDR) ./$(BINARY) plan nomad --to $(TO)
+cluster-plan: build ## Survey the local fleet and write a run file (TOOL=, TO=)
+	$(CLUSTER_ENV)=$(CLUSTER_ADDR) ./$(BINARY) plan $(TOOL) --to $(TO)
 
 cluster-run: build ## Drive the newest run file against the local fleet (ARGS=--yes)
-	@test -n "$(RUN_FILE)" || { echo "no run file; run 'make cluster-plan' first"; exit 1; }
+	@test -n "$(RUN_FILE)" || { echo "no $(TOOL) run file; run 'make cluster-plan' first"; exit 1; }
 	@printf 'driving %s\n\n' '$(RUN_FILE)'
-	NOMAD_ADDR=$(CLUSTER_ADDR) ./$(BINARY) run $(RUN_FILE) $(CLUSTER_FLAGS) $(ARGS)
+	$(CLUSTER_ENV)=$(CLUSTER_ADDR) ./$(BINARY) run $(RUN_FILE) $(CLUSTER_FLAGS) $(ARGS)
 
 ##@ Housekeeping
 

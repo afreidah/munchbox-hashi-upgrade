@@ -1,0 +1,141 @@
+# -------------------------------------------------------------------------------
+# Test Datacenter - A Consul Fleet The Tool Can Roll
+#
+# Author: Alex Freidah
+#
+# Three servers, two agents, and a configuration server. The shape matters:
+#
+#   three servers  tolerance of one, which the server gate requires before it
+#                  will let a run touch a coordinating host, and somewhere for
+#                  coordination to go when the leader hands it over.
+#   two agents     more than one host to roll, so the client stage is a
+#                  sequence rather than a single step.
+#   cinc-server    the pin lives somewhere real, and each node reads it back
+#                  when it converges.
+#
+# Simpler to run than the Nomad fleet: a Consul agent is one process with no
+# scheduler, so none of the cgroup or fingerprinting work that fleet needs
+# applies here.
+#
+# The fleet starts on FROM_VERSION, deliberately behind the version you plan
+# toward -- a datacenter already at the target plans a run whose every task is
+# a no-op, which looks like work and does none.
+#
+#   TOOL=consul make cluster-up
+#   TOOL=consul make cluster-plan
+#   TOOL=consul make cluster-run
+#
+# The names and the count are this file's own. No part of the real fleet
+# belongs in this repository, and nothing here is read by the tool: topology is
+# discovered from the API at runtime.
+# -------------------------------------------------------------------------------
+
+# Named, so the two environments are separate projects and can run at once.
+# Without it compose names the project after this file's directory, which both
+# of them share.
+name: hashi-consul
+
+x-node: &node
+  build:
+    context: ../node
+    args:
+      TOOL: consul
+      FROM_VERSION: ${FROM_VERSION:-2.0.3}
+  networks: [consul]
+  environment:
+    CINC_SERVER: http://cinc-server:8889/organizations/test
+  depends_on:
+    cinc-server:
+      condition: service_started
+
+x-server: &server
+  <<: *node
+  command:
+    - -server
+    - -bootstrap-expect=3
+    - -bind=0.0.0.0
+    - -client=0.0.0.0
+    - -data-dir=/tmp/consul
+    - -retry-join=consul-server-1
+    - -retry-join=consul-server-2
+    - -retry-join=consul-server-3
+
+x-agent: &agent
+  <<: *node
+  command:
+    - -bind=0.0.0.0
+    - -client=0.0.0.0
+    - -data-dir=/tmp/consul
+    - -retry-join=consul-server-1
+    - -retry-join=consul-server-2
+    - -retry-join=consul-server-3
+
+services:
+  cinc-server:
+    build:
+      context: ../cinc
+    container_name: consul-test-cinc
+    command:
+      - --addr=0.0.0.0:8889
+      - --orgs=test
+      - --no-auth
+    ports:
+      # Published on a different port from the Nomad environment's, so both
+      # can run at once. Inside the network it is still 8889, which is what
+      # the nodes reach it on.
+      - "8890:8889"
+    networks: [consul]
+
+  # The only agent publishing a port. A run reads the datacenter through a
+  # server, and any of the three would do; exposing one keeps CONSUL_HTTP_ADDR
+  # fixed.
+  consul-server-1:
+    <<: *server
+    container_name: consul-test-server-1
+    hostname: consul-server-1
+    ports:
+      - "8500:8500"
+    healthcheck:
+      # Answers only once the three have elected a leader, which is what
+      # `up --wait` blocks on: a run against a datacenter mid-election fails
+      # for reasons that have nothing to do with the tool.
+      test: ["CMD", "consul", "operator", "raft", "list-peers"]
+      interval: 2s
+      timeout: 2s
+      retries: 45
+
+  consul-server-2:
+    <<: *server
+    container_name: consul-test-server-2
+    hostname: consul-server-2
+
+  consul-server-3:
+    <<: *server
+    container_name: consul-test-server-3
+    hostname: consul-server-3
+
+  consul-client-1:
+    <<: *agent
+    container_name: consul-test-client-1
+    hostname: consul-client-1
+    healthcheck:
+      # An agent that crashes is restarted by its supervisor forever, so
+      # without a check of its own it reports healthy while never joining.
+      test: ["CMD", "consul", "members"]
+      interval: 2s
+      timeout: 2s
+      retries: 45
+
+  consul-client-2:
+    <<: *agent
+    container_name: consul-test-client-2
+    hostname: consul-client-2
+    healthcheck:
+      test: ["CMD", "consul", "members"]
+      interval: 2s
+      timeout: 2s
+      retries: 45
+
+networks:
+  consul:
+    driver: bridge

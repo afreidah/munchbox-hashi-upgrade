@@ -30,10 +30,16 @@
 # discovered from the API at runtime.
 # -------------------------------------------------------------------------------
 
+# Named, so the two environments are separate projects and can run at once.
+# Without it compose names the project after this file's directory, which both
+# of them share.
+name: hashi-nomad
+
 x-node: &node
   build:
-    context: ./test/node
+    context: ../node
     args:
+      TOOL: nomad
       FROM_VERSION: ${FROM_VERSION:-2.0.5}
   privileged: true
   cgroup: private
@@ -81,7 +87,7 @@ services:
   # signing is covered against a server that verifies it in the unit tests.
   cinc-server:
     build:
-      context: ./test/cinc
+      context: ../cinc
     container_name: nomad-test-cinc
     # No --key-out: the key it would write is not needed. Nothing here verifies
     # a signature, and `make cluster-keys` generates the parseable RSA key the

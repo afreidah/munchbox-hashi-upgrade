@@ -20,7 +20,12 @@ set -eu
 
 readonly server="${CINC_SERVER:-http://cinc-server:8889/organizations/test}"
 readonly lock=/var/cinc/cache/cinc-client-running.pid
-readonly pidfile=/var/run/nomad.pid
+readonly pidfile=/var/run/agent.pid
+
+# Which tool this node runs, written when the image was built. Read from a file
+# because this runs over ssh, whose session environment carries nothing the
+# image set.
+readonly tool="$(cat /etc/hashi-tool 2>/dev/null || echo nomad)"
 
 log() { printf '[cinc-client] %s\n' "$*"; }
 
@@ -35,17 +40,19 @@ trap 'rm -f "$lock"' EXIT INT TERM
 # covered against a server that verifies it, in the unit tests.
 
 log "reading the pin from $server"
-pinned=$(curl -fsS "$server/data/versions/nomad" | jq -r '.version // empty') || {
+pinned=$(curl -fsS "$server/data/versions/$tool" | jq -r '.version // empty') || {
   log "could not read the pin"
   exit 1
 }
 
 if [ -z "$pinned" ]; then
-  log "no version is pinned for nomad"
+  log "no version is pinned for $tool"
   exit 1
 fi
 
-running=$(nomad version | head -1 | sed 's/^Nomad v//')
+# Both tools print "<Name> v<version>" on the first line, with the name
+# capitalised; everything after the v is the version.
+running=$("$tool" version | head -1 | sed -E 's/^[A-Za-z]+ v//')
 log "pinned $pinned, running $running"
 
 if [ "$pinned" = "$running" ]; then
@@ -55,16 +62,26 @@ fi
 
 # --- Install ---------------------------------------------------------------
 
-readonly url="https://releases.hashicorp.com/nomad/${pinned}/nomad_${pinned}_linux_amd64.zip"
+readonly url="https://releases.hashicorp.com/${tool}/${pinned}/${tool}_${pinned}_linux_amd64.zip"
 
-log "fetching $url"
+# Announced with its size and timed, because these releases run to a couple of
+# hundred megabytes and curl is silent while it works. A minute of nothing
+# after "fetching" reads as a hang, and on the first run against a fleet that
+# is exactly what it looks like.
+size=$(curl -fsSI -m 30 "$url" 2>/dev/null | tr -d '\r' | awk 'tolower($1)=="content-length:"{print int($2/1048576)}')
+log "fetching $url (${size:-?} MB)"
+
 tmp=$(mktemp -d)
-curl -fsS -o "$tmp/nomad.zip" "$url" || { log "download failed"; exit 1; }
-unzip -o -q "$tmp/nomad.zip" -d "$tmp" || { log "unzip failed"; exit 1; }
+started=$(date +%s)
 
-install -m 0755 "$tmp/nomad" /bin/nomad
+curl -fsS -o "$tmp/release.zip" "$url" || { log "download failed"; exit 1; }
+log "downloaded in $(( $(date +%s) - started ))s"
+
+unzip -o -q "$tmp/release.zip" -d "$tmp" || { log "unzip failed"; exit 1; }
+
+install -m 0755 "$tmp/$tool" "/bin/$tool"
 rm -rf "$tmp"
-log "installed $(nomad version | head -1)"
+log "installed $("$tool" version | head -1)"
 
 # --- Restart ---------------------------------------------------------------
 #
