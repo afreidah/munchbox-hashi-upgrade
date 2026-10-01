@@ -43,6 +43,7 @@ type runOptions struct {
 	cincServer string
 	cincClient string
 	cincKey    string
+	cincCA     string
 
 	sshKey    string
 	sshCert   string
@@ -79,6 +80,8 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&opts.cincServer, "cinc-server", "", "configuration server URL")
 	f.StringVar(&opts.cincClient, "cinc-client", "", "identity to sign configuration server requests as")
 	f.StringVar(&opts.cincKey, "cinc-key", "", "private key for that identity")
+	f.StringVar(&opts.cincCA, "cinc-ca", "",
+		"the configuration server's certificate authority: a PEM file, or a directory of them")
 
 	f.StringVar(&opts.sshKey, "ssh-key", "", "private key to reach hosts with")
 	f.StringVar(&opts.sshCert, "ssh-cert", "", "signed certificate for that key")
@@ -109,11 +112,15 @@ func doRun(cmd *cobra.Command, path string, opts runOptions) error {
 		return err
 	}
 
+	// Only a live run writes its outcomes back. A rehearsal that journalled
+	// would settle every task and leave the file finished, so the real run
+	// against it would find nothing to do and say so.
 	r, err := runner.New(runner.Options{
 		Run:     run,
 		Steps:   execute.Steps(deps),
 		Out:     cmd.OutOrStdout(),
 		Confirm: confirmerFor(cmd, opts),
+		Journal: mode(opts) == execute.Live,
 	})
 	if err != nil {
 		return err
@@ -199,9 +206,10 @@ func assemble(cmd *cobra.Command, run *plan.Run, opts runOptions) (*execute.Deps
 	}
 
 	pins, err := cincclient.New(cincclient.Options{
-		ServerURL:  opts.cincServer,
-		ClientName: opts.cincClient,
-		KeyPath:    opts.cincKey,
+		ServerURL:    opts.cincServer,
+		ClientName:   opts.cincClient,
+		KeyPath:      opts.cincKey,
+		TrustedCerts: opts.cincCA,
 	})
 	if err != nil {
 		return nil, err
@@ -217,7 +225,7 @@ func assemble(cmd *cobra.Command, run *plan.Run, opts runOptions) (*execute.Deps
 		return nil, err
 	}
 
-	fleet, err := cincclient.NewFleet(cincclient.OverSSH{Client: ssh})
+	fleet, err := cincclient.NewFleet(cincclient.OverSSH{Client: ssh}, cmd.OutOrStdout())
 	if err != nil {
 		return nil, err
 	}

@@ -17,7 +17,9 @@ package cinc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"time"
 
 	"github.com/afreidah/munchbox-hashi-upgrade/internal/clients/ssh"
 )
@@ -58,16 +60,36 @@ func (o OverSSH) Connect(t ssh.Target) (Session, error) {
 }
 
 // Fleet runs configuration-management commands on nodes.
+//
+// out is where it reports waiting. Freezing a fleet whose timers are on a
+// schedule usually means waiting for a converge already under way somewhere,
+// and a caller that said nothing for the duration would be indistinguishable
+// from one that had hung.
+// wait and poll bound the wait for a converge already under way. Fields rather
+// than constants so a test can drive the waiting path in milliseconds.
 type Fleet struct {
 	dial Dialer
+	out  io.Writer
+	wait time.Duration
+	poll time.Duration
 }
 
-// NewFleet returns a fleet that acts through dial.
-func NewFleet(dial Dialer) (*Fleet, error) {
+// NewFleet returns a fleet that acts through dial, reporting to out. A nil out
+// discards.
+func NewFleet(dial Dialer, out io.Writer) (*Fleet, error) {
 	if dial == nil {
 		return nil, errors.New("dialer is required")
 	}
-	return &Fleet{dial: dial}, nil
+	if out == nil {
+		out = io.Discard
+	}
+	return &Fleet{dial: dial, out: out, wait: convergeWait, poll: convergePoll}, nil
+}
+
+// sayf reports progress. A write that fails is discarded: the fleet's business
+// is the hosts, not its own narration.
+func (f *Fleet) sayf(format string, args ...any) {
+	_, _ = fmt.Fprintf(f.out, format, args...)
 }
 
 // Converge runs the configuration client on one node, streaming its output to

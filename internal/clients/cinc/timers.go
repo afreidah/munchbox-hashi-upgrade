@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/afreidah/munchbox-hashi-upgrade/internal/clients/ssh"
 )
@@ -28,6 +29,15 @@ import (
 // Exit code flock reports when the lock is held, distinct from the codes it
 // uses for its own failures so a busy node is told apart from a broken one.
 const lockBusyCode = 9
+
+// How long a converge already under way is given to finish, and how often it
+// is looked at. Long enough for a real cookbook run on a slow host; short
+// enough that a lock left behind by something wedged does not hold a fleet-wide
+// upgrade open indefinitely.
+const (
+	convergeWait = 15 * time.Minute
+	convergePoll = 10 * time.Second
+)
 
 // Conditions a freeze refuses on, rather than the command itself failing.
 var (
@@ -51,9 +61,12 @@ func (e *NodeError) Unwrap() error { return e.Err }
 
 // Freeze stops the scheduled converge on every target and confirms it stopped.
 //
-// A node that is mid-converge fails rather than being waited on: the caller
-// decides whether to retry or abandon, and blocking here would hold the whole
-// fleet behind the slowest run.
+// A node mid-converge is waited for rather than refused. The timers are on a
+// schedule and a fleet is many hosts, so at any moment one of them is usually
+// running: failing on that would make freezing a matter of retrying until the
+// gaps happened to line up. The timer is disabled first, so nothing new starts
+// while the wait is on, and what is left is bounded by the converge already
+// under way.
 func (f *Fleet) Freeze(ctx context.Context, targets []ssh.Target) error {
 	return f.each(ctx, targets, func(ctx context.Context, s Session) error {
 		if _, err := must(ctx, s, "systemctl disable --now "+timerUnit); err != nil {
@@ -68,8 +81,42 @@ func (f *Fleet) Freeze(ctx context.Context, targets []ssh.Target) error {
 			return ErrTimerActive
 		}
 
-		return inFlight(ctx, s)
+		return f.awaitIdle(ctx, s)
 	})
+}
+
+// awaitIdle waits for a converge already running to finish.
+//
+// Reported when it has to wait, and only then: a fleet where nothing is running
+// should say nothing, and a run that appears to hang for ten minutes on its
+// first task is worse than one that says what it is waiting for.
+func (f *Fleet) awaitIdle(ctx context.Context, s Session) error {
+	deadline := time.Now().Add(f.wait)
+
+	for said := false; ; {
+		err := inFlight(ctx, s)
+		if !errors.Is(err, ErrConvergeInFlight) {
+			if said {
+				f.sayf("    converge finished\n")
+			}
+			return err
+		}
+
+		if !said {
+			f.sayf("    a converge is already running; waiting for it to finish\n")
+			said = true
+		}
+
+		if time.Now().After(deadline) {
+			return fmt.Errorf("%w after %s", ErrConvergeInFlight, f.wait)
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(f.poll):
+		}
+	}
 }
 
 // Thaw starts the scheduled converge on every target.

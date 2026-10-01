@@ -35,12 +35,17 @@ var (
 
 // Options configure a runner. Now and Confirm have defaults, so the usual
 // caller supplies a run, its steps and somewhere to write.
+// Journal is whether outcomes are written back to the run file. A rehearsal
+// sets it false: it settles its tasks in memory so the loop advances, and
+// persisting that would mark the file finished, leaving a later real run with
+// nothing to do and reporting success for work it never did.
 type Options struct {
 	Run     *plan.Run
 	Steps   map[string]Step
 	Out     io.Writer
 	Confirm Confirmer
 	Now     func() time.Time
+	Journal bool
 }
 
 // Runner carries out a run.
@@ -50,6 +55,7 @@ type Runner struct {
 	out     io.Writer
 	confirm Confirmer
 	now     func() time.Time
+	journal bool
 
 	// Compensations from the tasks that have succeeded, innermost last.
 	stack []Compensation
@@ -72,6 +78,7 @@ func New(opts Options) (*Runner, error) {
 		out:     opts.Out,
 		confirm: opts.Confirm,
 		now:     opts.Now,
+		journal: opts.Journal,
 	}
 	if r.confirm == nil {
 		r.confirm = Always()
@@ -157,14 +164,14 @@ func (r *Runner) Task(ctx context.Context, id string) error {
 	}
 
 	r.run.Begin(task.ID, r.now())
-	if err := r.run.Save(); err != nil {
+	if err := r.save(); err != nil {
 		return err
 	}
 
 	result, err := step(ctx, *task)
 	if err != nil {
 		r.run.Settle(task.ID, plan.Failed, r.now(), err)
-		if saved := r.run.Save(); saved != nil {
+		if saved := r.save(); saved != nil {
 			// The failure is what the operator needs; losing the journal as well
 			// is the worse problem, so both are reported.
 			return errors.Join(err, saved)
@@ -180,7 +187,7 @@ func (r *Runner) Task(ctx context.Context, id string) error {
 	}
 
 	r.run.Settle(task.ID, outcome, r.now(), nil)
-	if err := r.run.Save(); err != nil {
+	if err := r.save(); err != nil {
 		return err
 	}
 
@@ -221,6 +228,19 @@ func (r *Runner) find(id string) (*plan.Task, bool) {
 
 // sayf writes to the operator. Output that cannot be written is not worth
 // failing a run over.
+// save writes the run file, unless this run is not journalling.
+//
+// A rehearsal settles its tasks in memory so the loop advances past them.
+// Writing that would mark the file finished -- unnecessary counts as settled --
+// and the next real run against it would find nothing to do and report success
+// for an upgrade it never performed.
+func (r *Runner) save() error {
+	if !r.journal {
+		return nil
+	}
+	return r.run.Save()
+}
+
 // carriedOut counts the tasks that actually did something.
 //
 // A task that settled unnecessary did not: the host was already at the target,

@@ -18,6 +18,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"go.uber.org/mock/gomock"
 
@@ -65,10 +66,15 @@ func stand(t *testing.T, nodes ...*node) (*Fleet, []ssh.Target) {
 		dialer.EXPECT().Connect(target).Return(session(ctrl, n), nil)
 	}
 
-	fleet, err := NewFleet(dialer)
+	fleet, err := NewFleet(dialer, io.Discard)
 	if err != nil {
 		t.Fatalf("NewFleet: %v", err)
 	}
+
+	// The real waits are minutes. A test that exercises the waiting path
+	// should cost milliseconds.
+	fleet.wait = 50 * time.Millisecond
+	fleet.poll = time.Millisecond
 
 	return fleet, targets
 }
@@ -99,8 +105,14 @@ func session(ctrl *gomock.Controller, n *node) *MockSession {
 }
 
 func TestNewFleet(t *testing.T) {
-	if _, err := NewFleet(nil); err == nil {
+	if _, err := NewFleet(nil, io.Discard); err == nil {
 		t.Error("expected an error for a missing dialer")
+	}
+
+	// A nil writer is not an error: a fleet that reports nowhere is a fleet
+	// that reports nothing, which is what a caller with no output wants.
+	if _, err := NewFleet(NewMockDialer(gomock.NewController(t)), nil); err != nil {
+		t.Errorf("NewFleet with no writer: %v", err)
 	}
 }
 

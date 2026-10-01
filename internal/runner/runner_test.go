@@ -83,6 +83,9 @@ func record(ran *[]string, id string) Step {
 func build(t *testing.T, r *plan.Run, steps map[string]Step, confirm Confirmer) (*Runner, *strings.Builder) {
 	t.Helper()
 
+	// Journalling, because what these cover is a real run: the file as a
+	// record of what happened is most of the behaviour being asserted. A
+	// rehearsal's not writing is covered where the modes are, in the cli.
 	var out strings.Builder
 	runner, err := New(Options{
 		Run:     r,
@@ -90,6 +93,7 @@ func build(t *testing.T, r *plan.Run, steps map[string]Step, confirm Confirmer) 
 		Out:     &out,
 		Confirm: confirm,
 		Now:     func() time.Time { return at },
+		Journal: true,
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)

@@ -45,8 +45,13 @@ func TestStatusOfAnUntouchedRun(t *testing.T) {
 // on stated rather than inferred from the absence of anything else.
 func TestStatusOfAFinishedRun(t *testing.T) {
 	path := written(t, runFile)
-	if _, err := execRun(t, "--no-op", path); err != nil {
-		t.Fatalf("run: %v", err)
+
+	run := opened(t, path)
+	for _, task := range run.Tasks {
+		run.Settle(task.ID, plan.Succeeded, time.Now().UTC(), nil)
+	}
+	if err := run.Save(); err != nil {
+		t.Fatalf("save: %v", err)
 	}
 
 	got := report(opened(t, path))
