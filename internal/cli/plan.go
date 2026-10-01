@@ -22,7 +22,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	nomadclient "github.com/afreidah/munchbox-hashi-upgrade/internal/clients/nomad"
+	"github.com/afreidah/munchbox-hashi-upgrade/internal/clients"
 	"github.com/afreidah/munchbox-hashi-upgrade/internal/plan"
 	"github.com/afreidah/munchbox-hashi-upgrade/internal/steps"
 )
@@ -65,14 +65,7 @@ func newPlanCmd() *cobra.Command {
 }
 
 func runPlan(cmd *cobra.Command, tool plan.Tool, opts planOptions) error {
-	if !tool.Known() {
-		return fmt.Errorf("unknown tool %q; expected nomad, consul or vault", tool)
-	}
-	if tool != plan.Nomad {
-		return fmt.Errorf("%s is not supported yet; only nomad is", tool)
-	}
-
-	client, err := nomadclient.New(nomadclient.Options{Address: opts.address, Region: opts.region})
+	client, err := clients.For(tool, clients.Options{Address: opts.address, Region: opts.region})
 	if err != nil {
 		return err
 	}
@@ -85,7 +78,15 @@ func runPlan(cmd *cobra.Command, tool plan.Tool, opts planOptions) error {
 		return errors.New("the survey found no hosts; check the address and token")
 	}
 
-	spec := plan.Spec{Tool: tool, From: running(cluster), To: opts.to, Drain: opts.drain}
+	// Draining is asked for but not always possible: a tool that places no work
+	// has nothing to move off a host, and recording the request would put a
+	// field in the file that nothing acts on.
+	spec := plan.Spec{
+		Tool:  tool,
+		From:  running(cluster),
+		To:    opts.to,
+		Drain: opts.drain && tool.Schedules(),
+	}
 	run := plan.Create(
 		filepath.Join(opts.dir, runFilename(tool, cluster, time.Now().UTC())),
 		Version,
@@ -200,11 +201,15 @@ func topology(run *plan.Run) string {
 			fmt.Fprintf(&b, "%ss\n", kind)
 		}
 
-		fmt.Fprintf(&b, "  %-*s  %-8s", width, m.Name, cmp.Or(m.Version, "unknown"))
+		// Trimmed, because the version column is padded for the annotations
+		// that follow it and most hosts have none -- which would otherwise
+		// leave every ordinary line ending in whitespace.
+		line := fmt.Sprintf("  %-*s  %-8s", width, m.Name, cmp.Or(m.Version, "unknown"))
 		if notes := condition(m, run.Spec.To); len(notes) > 0 {
-			fmt.Fprintf(&b, "  %s", strings.Join(notes, ", "))
+			line += "  " + strings.Join(notes, ", ")
 		}
-		b.WriteString("\n")
+
+		b.WriteString(strings.TrimRight(line, " ") + "\n")
 	}
 
 	return b.String()

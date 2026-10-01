@@ -22,8 +22,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/afreidah/munchbox-hashi-upgrade/internal/clients"
 	cincclient "github.com/afreidah/munchbox-hashi-upgrade/internal/clients/cinc"
-	nomadclient "github.com/afreidah/munchbox-hashi-upgrade/internal/clients/nomad"
 	sshclient "github.com/afreidah/munchbox-hashi-upgrade/internal/clients/ssh"
 	"github.com/afreidah/munchbox-hashi-upgrade/internal/execute"
 	"github.com/afreidah/munchbox-hashi-upgrade/internal/plan"
@@ -182,17 +182,23 @@ func assemble(cmd *cobra.Command, run *plan.Run, opts runOptions) (*execute.Deps
 		return deps, nil
 	}
 
-	nomad, err := nomadclient.New(nomadclient.Options{Address: opts.address, Region: opts.region})
+	cluster, err := clients.For(run.Spec.Tool, clients.Options{Address: opts.address, Region: opts.region})
 	if err != nil {
 		return nil, err
 	}
-	deps.Survey = nomad
-	deps.Coordination = nomad
-	deps.Drains = nomad
+	deps.Survey = cluster
+	deps.Coordination = cluster
+
+	// Asked rather than assumed. Only a cluster that schedules work can drain a
+	// host, and a run against one that does not leaves this unset -- which is
+	// the same state a run that was not asked to drain is in.
+	if drains, ok := cluster.(execute.Drainer); ok {
+		deps.Drains = drains
+	}
 
 	// The gate reports what it is waiting for. Without somewhere to write it, a
 	// wait of up to three minutes is indistinguishable from a hang.
-	gate, err := ready.New(ready.Options{Cluster: nomad, Out: cmd.OutOrStdout()})
+	gate, err := ready.New(ready.Options{Cluster: cluster, Out: cmd.OutOrStdout()})
 	if err != nil {
 		return nil, err
 	}

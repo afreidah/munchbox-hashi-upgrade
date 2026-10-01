@@ -15,14 +15,12 @@
 package nomad
 
 import (
-	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
-	"slices"
 	"strings"
 	"time"
 
@@ -175,24 +173,8 @@ func assemble(health *api.OperatorHealthReply, stubs []*api.NodeListStub, at tim
 		})
 	}
 
-	sortMembers(cluster.Members)
+	cluster.Sort()
 	return cluster
-}
-
-// sortMembers puts servers ahead of clients and orders each group by name, so
-// one cluster always surveys to the same snapshot and two surveys can be
-// compared. Presentation only; the order a run touches hosts in is derived
-// from what they carry, not from this.
-func sortMembers(members []plan.Member) {
-	slices.SortStableFunc(members, func(a, b plan.Member) int {
-		if a.Kind != b.Kind {
-			if a.Kind == plan.KindServer {
-				return -1
-			}
-			return 1
-		}
-		return cmp.Compare(a.Name, b.Name)
-	})
 }
 
 // hostOf drops a port when one is present. The two reads report addresses
