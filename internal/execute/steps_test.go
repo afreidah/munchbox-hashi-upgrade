@@ -104,13 +104,16 @@ func TestThawReleasesTheTimers(t *testing.T) {
 // PIN
 // -------------------------------------------------------------------------
 
-func TestPinWritesTheNewVersionAndCompensatesWithTheOld(t *testing.T) {
+// The pin stands whatever becomes of the run. Converges are frozen throughout,
+// so nothing reads it until the run ends; rolling it back would leave a fleet
+// half-converged onto the new version aimed at the old one, and would leave a
+// resume skipping this step and installing a version no gate is waiting for.
+func TestPinStandsAndLeavesNothingToUnwind(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	versions := NewMockPinner(ctrl)
 	versions.EXPECT().Pin(gomock.Any(), "nomad").Return("2.0.5", nil)
 	versions.EXPECT().SetPin(gomock.Any(), "nomad", "2.0.6").Return(nil)
-	versions.EXPECT().SetPin(gomock.Any(), "nomad", "2.0.5").Return(nil)
 
 	deps := live(&Deps{Versions: versions})
 
@@ -120,44 +123,8 @@ func TestPinWritesTheNewVersionAndCompensatesWithTheOld(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pin: %v", err)
 	}
-	if result.Undo == nil {
-		t.Fatal("pin left no compensation")
-	}
-	if !strings.Contains(result.Undo.Label, "2.0.5") {
-		t.Errorf("label = %q, want it to name the version being restored", result.Undo.Label)
-	}
-	if err := result.Undo.Undo(context.Background()); err != nil {
-		t.Fatalf("compensation: %v", err)
-	}
-}
-
-// Putting back a pin that was never set means removing the item. Writing an
-// empty version is refused, and leaving it at the new version would have every
-// host converge to it once the unwind releases the timers.
-func TestPinThatWasNotSetBeforeIsRemovedOnTheWayBack(t *testing.T) {
-	ctrl := gomock.NewController(t)
-
-	versions := NewMockPinner(ctrl)
-	versions.EXPECT().Pin(gomock.Any(), "nomad").Return("", nil)
-	versions.EXPECT().SetPin(gomock.Any(), "nomad", "2.0.6").Return(nil)
-	versions.EXPECT().ClearPin(gomock.Any(), "nomad").Return(nil)
-
-	deps := live(&Deps{Versions: versions})
-
-	result, err := pin(deps)(context.Background(), task(steps.CommandPin, map[string]any{
-		"tool": "nomad", "version": "2.0.6",
-	}))
-	if err != nil {
-		t.Fatalf("pin: %v", err)
-	}
-	if result.Undo == nil {
-		t.Fatal("pin left no compensation")
-	}
-	if !strings.Contains(result.Undo.Label, "removing") {
-		t.Errorf("label = %q, want it to say the pin is being removed", result.Undo.Label)
-	}
-	if err := result.Undo.Undo(context.Background()); err != nil {
-		t.Fatalf("compensation: %v", err)
+	if result.Undo != nil {
+		t.Errorf("pin left a compensation that would aim the fleet backwards: %s", result.Undo.Label)
 	}
 }
 

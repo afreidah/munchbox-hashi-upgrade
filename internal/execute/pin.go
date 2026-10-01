@@ -8,9 +8,13 @@
 // before any host is touched, so the hosts differ only in when they are
 // converged and never in what they converge toward.
 //
-// The pin as it stood is read first and handed back as the compensation, so a
-// run that fails before the first host is upgraded leaves the fleet aimed where
-// it was.
+// The pin is the run's intent rather than a reversible side effect, so a run
+// that fails leaves it where it put it. Converges are frozen for the whole run,
+// so a pin nothing is reading harms nothing; rolling it back does harm, in two
+// ways. A fleet half-converged onto the new version and pinned to the old one
+// converges backwards the moment the timers return, and a resume skips this
+// step as already done -- so every host after it installs the old version and
+// waits at a gate for a version that is no longer coming.
 // -------------------------------------------------------------------------------
 
 package execute
@@ -48,34 +52,8 @@ func pin(deps *Deps) runner.Step {
 			return runner.Result{}, err
 		}
 
-		// Putting back an absent pin means removing the item, not writing an
-		// empty version: nothing reads an item with no version and a converge
-		// against one fails, so the two are different states. Leaving the pin
-		// at the new version would be worse still -- the timers come back on
-		// as the run unwinds, and every host would then converge to it
-		// unattended, which is the thing freezing before pinning prevents.
-		return runner.Result{
-			Undo: &runner.Compensation{
-				Label: restoring(tool, was),
-				Undo: func(ctx context.Context) error {
-					if was == "" {
-						return deps.Versions.ClearPin(ctx, tool)
-					}
-					return deps.Versions.SetPin(ctx, tool, was)
-				},
-			},
-		}, nil
+		return runner.Result{}, nil
 	}
-}
-
-// restoring is what the operator is told is being unwound. A pin that was not
-// set before the run is put back by removal, and "restoring the pin to
-// nothing" reads as a defect rather than as the intent.
-func restoring(tool, was string) string {
-	if was == "" {
-		return fmt.Sprintf("removing the %s pin, which was not set before the run", tool)
-	}
-	return fmt.Sprintf("restoring the %s pin to %s", tool, was)
 }
 
 // arg reads a string argument a task's action declares.
