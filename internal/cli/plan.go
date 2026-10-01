@@ -205,7 +205,7 @@ func topology(run *plan.Run) string {
 		// that follow it and most hosts have none -- which would otherwise
 		// leave every ordinary line ending in whitespace.
 		line := fmt.Sprintf("  %-*s  %-8s", width, m.Name, cmp.Or(m.Version, "unknown"))
-		if notes := condition(m, run.Spec.To); len(notes) > 0 {
+		if notes := condition(m, run.Spec.To, run.Cluster.Votes()); len(notes) > 0 {
 			line += "  " + strings.Join(notes, ", ")
 		}
 
@@ -220,13 +220,17 @@ func topology(run *plan.Run) string {
 // Silence means ordinary: healthy, a voter if it coordinates, eligible if it
 // carries work. Only the departures are printed, so a fleet that is fine reads
 // as one.
-func condition(m plan.Member, target string) []string {
+//
+// votes says whether the cluster's coordination runs on a quorum of these
+// hosts. Where it does not, no host is a voter and saying so about every one of
+// them describes the cluster rather than any departure from it.
+func condition(m plan.Member, target string, votes bool) []string {
 	var out []string
 
 	if m.Primary {
 		out = append(out, "coordinating")
 	}
-	if m.Kind == plan.KindServer && !m.Voter {
+	if votes && m.Kind == plan.KindServer && !m.Voter {
 		out = append(out, "not a voter")
 	}
 	if !m.Healthy {

@@ -161,6 +161,27 @@ func (c Cluster) Sort() {
 	})
 }
 
+// Votes is whether coordination in this cluster runs on a quorum of its own
+// members.
+//
+// Read from the cluster rather than decided by the tool, because it is a
+// property of how the cluster is deployed and not of what it is. A Vault
+// cluster keeping its data in Consul has no voters; the same Vault with
+// integrated raft storage does. Asking the members means neither case has to
+// be configured, and a cluster that is migrated between them is read correctly
+// without being told.
+//
+// One host mid-restart has dropped out of its quorum while its peers have not,
+// so any voter makes this a voting cluster.
+func (c Cluster) Votes() bool {
+	for _, m := range c.Members {
+		if m.Voter {
+			return true
+		}
+	}
+	return false
+}
+
 // OfKind returns the members of one kind, in survey order.
 func (c Cluster) OfKind(k Kind) []Member {
 	var out []Member

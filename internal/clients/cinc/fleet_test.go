@@ -118,7 +118,7 @@ func TestNewFleet(t *testing.T) {
 
 func TestConverge(t *testing.T) {
 	t.Run("runs the converge and streams its output", func(t *testing.T) {
-		n := &node{host: "goren", replies: map[string]answer{
+		n := &node{host: "server-a", replies: map[string]answer{
 			converge: {res: ssh.Result{Output: "resolving cookbooks\n"}},
 		}}
 		fleet, targets := stand(t, n)
@@ -142,7 +142,7 @@ func TestConverge(t *testing.T) {
 	// A converge that fails is the case the runner exists to handle, so the exit
 	// status reaches it rather than being turned into an error here.
 	t.Run("a failed converge is a result, not an error", func(t *testing.T) {
-		n := &node{host: "stabler", replies: map[string]answer{
+		n := &node{host: "server-b", replies: map[string]answer{
 			converge: {res: ssh.Result{Output: "1 resource failed\n", Code: 1}},
 		}}
 		fleet, targets := stand(t, n)
@@ -167,7 +167,7 @@ func TestConverge(t *testing.T) {
 
 	t.Run("reports a command that never ran", func(t *testing.T) {
 		want := errors.New("session closed")
-		n := &node{host: "goren", replies: map[string]answer{converge: {err: want}}}
+		n := &node{host: "server-a", replies: map[string]answer{converge: {err: want}}}
 		fleet, targets := stand(t, n)
 
 		if _, err := fleet.Converge(t.Context(), targets[0], nil); !errors.Is(err, want) {

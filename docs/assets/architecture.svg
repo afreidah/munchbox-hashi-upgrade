@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 520" role="img" aria-labelledby="title desc">
+  <title id="title">How a run is put together</title>
+  <desc id="desc">The plan command surveys a cluster and writes a run file. The run command drives that file: the runner owns order and persistence, a table maps each task's command to a step, and steps reach the fleet through six interfaces. One client per tool answers the cluster questions, chosen by clients.For; a configuration-server client moves the pin and the timers; an ssh client runs the converge on each host. The status command reads the file and nothing else.</desc>
+  <defs>
+    <style>
+      .t{font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+      .label{font-size:19px;font-weight:700;fill:#f8fafc}
+      .small{font-size:14px;font-weight:600;fill:#c9ccd3}
+      .micro{font-size:14px;font-weight:700;fill:#ff8340;letter-spacing:.08em}
+      .line{fill:none;stroke:#fc6718;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}
+      .dash{fill:none;stroke:#9a9ea6;stroke-width:2.5;stroke-dasharray:7 6;stroke-linecap:round;stroke-linejoin:round}
+      .card{fill:#15171c;stroke:#fc6718;stroke-width:2}
+      .quiet{fill:#15171c;stroke:#9a9ea6;stroke-width:2}
+    </style>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0l10 5-10 5z" fill="#fc6718"/></marker>
+    <marker id="arrow-grey" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0l10 5-10 5z" fill="#9a9ea6"/></marker>
+  </defs>
+  <g class="t">
+
+    <!-- Commands -->
+    <text x="40" y="36" class="micro">PLAN: READS ONLY</text>
+    <rect x="40" y="56" width="200" height="86" rx="20" class="card"/>
+    <rect x="400" y="56" width="280" height="86" rx="20" class="card"/>
+    <path class="line" marker-end="url(#arrow)" d="M240 99H400"/>
+    <g text-anchor="middle">
+      <text x="140" y="94" class="label">plan</text><text x="140" y="120" class="small">survey the cluster</text>
+      <text x="540" y="94" class="label">run file</text><text x="540" y="120" class="small">tasks, survey, outcomes</text>
+    </g>
+
+    <!-- Status reads the file only -->
+    <rect x="840" y="56" width="200" height="86" rx="20" class="quiet"/>
+    <path class="dash" marker-end="url(#arrow-grey)" d="M680 99H840"/>
+    <g text-anchor="middle">
+      <text x="940" y="94" class="label">status</text><text x="940" y="120" class="small">no cluster, no change</text>
+    </g>
+
+    <!-- Run -->
+    <text x="40" y="196" class="micro">RUN: THE FILE IS REWRITTEN AFTER EVERY TASK</text>
+    <path class="line" marker-end="url(#arrow)" d="M540 142V180"/>
+    <rect x="40" y="212" width="250" height="86" rx="20" class="card"/>
+    <rect x="330" y="212" width="250" height="86" rx="20" class="card"/>
+    <rect x="620" y="212" width="420" height="86" rx="20" class="card"/>
+    <path class="line" marker-end="url(#arrow)" d="M290 255H330"/>
+    <path class="line" marker-end="url(#arrow)" d="M580 255H620"/>
+    <g text-anchor="middle">
+      <text x="165" y="250" class="label">runner</text><text x="165" y="276" class="small">order, journal, unwinding</text>
+      <text x="455" y="250" class="label">step table</text><text x="455" y="276" class="small">command to implementation</text>
+      <text x="830" y="250" class="label">six interfaces</text>
+      <text x="830" y="276" class="small">pin, converge, survey, wait, coordinate, drain</text>
+    </g>
+
+    <!-- Clients -->
+    <text x="40" y="352" class="micro">CLIENTS: ONE PER TOOL</text>
+    <path class="line" marker-end="url(#arrow)" d="M830 298V336"/>
+    <rect x="40" y="368" width="560" height="120" rx="20" class="card"/>
+    <text x="320" y="398" text-anchor="middle" class="label">clients.For</text>
+    <rect x="68" y="414" width="168" height="56" rx="14" class="quiet"/>
+    <rect x="252" y="414" width="168" height="56" rx="14" class="quiet"/>
+    <rect x="436" y="414" width="136" height="56" rx="14" class="quiet"/>
+    <g text-anchor="middle">
+      <text x="152" y="440" class="small">nomad</text><text x="152" y="459" class="small">autopilot + nodes</text>
+      <text x="336" y="440" class="small">consul</text><text x="336" y="459" class="small">autopilot + gossip</text>
+      <text x="504" y="440" class="small">vault</text><text x="504" y="459" class="small">ha-status</text>
+    </g>
+
+    <rect x="640" y="368" width="190" height="120" rx="20" class="card"/>
+    <rect x="860" y="368" width="180" height="120" rx="20" class="card"/>
+    <g text-anchor="middle">
+      <text x="735" y="412" class="label">cinc</text>
+      <text x="735" y="438" class="small">the version pin</text>
+      <text x="735" y="459" class="small">the converge timers</text>
+      <text x="950" y="412" class="label">ssh</text>
+      <text x="950" y="438" class="small">cinc-client on</text>
+      <text x="950" y="459" class="small">each host</text>
+    </g>
+
+    <text x="1160" y="508" text-anchor="end" class="small">Adding a tool is a package and a case. Nothing above the interfaces changes.</text>
+  </g>
+</svg>

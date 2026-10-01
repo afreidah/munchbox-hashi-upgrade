@@ -1,0 +1,63 @@
+#!/bin/sh
+# -------------------------------------------------------------------------------
+# vault-config - Write This Node's Vault Configuration
+#
+# Author: Alex Freidah
+#
+# Nomad and Consul take their whole configuration as flags, so a compose file
+# can describe a node on its own. Vault takes a file, so one is rendered here
+# from the environment the compose file sets.
+#
+# The two choices worth stating, both to match the cluster this tool is written
+# for rather than to be the simplest thing that boots:
+#
+#   consul storage   that cluster keeps its data in Consul, not in raft of its
+#                    own. It is the reason nothing here votes, and testing
+#                    against raft would exercise a different tool.
+#   transit seal     a second Vault stands in for OCI KMS. What matters is that
+#                    a node restarts and comes back unsealed with nobody
+#                    typing anything, which is what the gates wait on.
+# -------------------------------------------------------------------------------
+
+set -eu
+
+readonly config=/etc/vault.d/vault.hcl
+
+mkdir -p "$(dirname "$config")" /opt/vault/data
+
+cat > "$config" <<EOF
+# Rendered by vault-config at container start.
+
+storage "consul" {
+  address = "${CONSUL_STORAGE_ADDR:-consul-storage:8500}"
+  path    = "vault/"
+}
+
+listener "tcp" {
+  address     = "0.0.0.0:8200"
+  tls_disable = true
+}
+
+# Stands in for OCI KMS. The node comes back unsealed on its own, which is the
+# behaviour the run's gates are written against.
+seal "transit" {
+  address         = "${TRANSIT_ADDR:-http://vault-seal:8200}"
+  token           = "${TRANSIT_TOKEN:-seal-root}"
+  disable_renewal = "true"
+  key_name        = "unseal"
+  mount_path      = "transit/"
+}
+
+# Addressed by IP rather than by container name. api_addr is what the HA
+# status advertises for this node, and a run surveys from outside the compose
+# network where a container name does not resolve -- so a name here would have
+# every per-node read fail and fall back, quietly skipping the read that tells
+# a sealed node from a healthy one. A bridge address answers from both sides.
+api_addr     = "http://$(hostname -i | awk '{print $1}'):8200"
+cluster_addr = "http://$(hostname -i | awk '{print $1}'):8201"
+
+# A container cannot lock memory, and Vault refuses to start rather than
+# quietly allowing itself to be swapped.
+disable_mlock = true
+ui            = false
+EOF

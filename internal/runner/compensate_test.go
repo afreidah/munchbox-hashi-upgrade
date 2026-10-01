@@ -51,8 +51,8 @@ func TestFailure(t *testing.T) {
 		if !errors.Is(err, boom) {
 			t.Fatalf("Apply error = %v, want %v", err, boom)
 		}
-		if got := r.Outcome("upgrade-goren"); got != plan.Failed {
-			t.Errorf("upgrade-goren = %s, want %s", got, plan.Failed)
+		if got := r.Outcome("upgrade-server-a"); got != plan.Failed {
+			t.Errorf("upgrade-server-a = %s, want %s", got, plan.Failed)
 		}
 		if got := r.Outcome("handoff"); got != plan.Waiting {
 			t.Errorf("handoff = %s, want the run stopped before it", got)
@@ -73,7 +73,7 @@ func TestFailure(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Open: %v", err)
 		}
-		if got := reopened.Progress["upgrade-goren"].Err; !strings.Contains(got, "converge exited 1") {
+		if got := reopened.Progress["upgrade-server-a"].Err; !strings.Contains(got, "converge exited 1") {
 			t.Errorf("recorded error = %q, want the cause", got)
 		}
 	})
@@ -84,7 +84,7 @@ func TestFailure(t *testing.T) {
 		var unwound []string
 		steps := map[string]Step{
 			"freeze-converge":       stacking("release the converge timers", &unwound, nil),
-			"upgrade-member":        stacking("make goren eligible again", &unwound, nil),
+			"upgrade-member":        stacking("make server-a eligible again", &unwound, nil),
 			"hand-off-coordination": failing(errors.New("no other voter")),
 		}
 
@@ -93,7 +93,7 @@ func TestFailure(t *testing.T) {
 			t.Fatal("expected the failure to be reported")
 		}
 
-		want := "make goren eligible again,release the converge timers"
+		want := "make server-a eligible again,release the converge timers"
 		if strings.Join(unwound, ",") != want {
 			t.Errorf("unwound %v, want %s", unwound, want)
 		}
@@ -108,7 +108,7 @@ func TestFailure(t *testing.T) {
 		var unwound []string
 		steps := map[string]Step{
 			"freeze-converge":       stacking("release the converge timers", &unwound, nil),
-			"upgrade-member":        stacking("make goren eligible again", &unwound, errors.New("node gone")),
+			"upgrade-member":        stacking("make server-a eligible again", &unwound, errors.New("node gone")),
 			"hand-off-coordination": failing(errors.New("no other voter")),
 		}
 
@@ -118,7 +118,7 @@ func TestFailure(t *testing.T) {
 		if len(unwound) != 2 {
 			t.Errorf("unwound %v, want both attempted", unwound)
 		}
-		if !strings.Contains(out.String(), "could not unwind make goren eligible again") {
+		if !strings.Contains(out.String(), "could not unwind make server-a eligible again") {
 			t.Errorf("output %q does not report the failed compensation", out)
 		}
 	})
@@ -165,14 +165,14 @@ func TestTask(t *testing.T) {
 	t.Run("runs one task the loop would refuse to reach", func(t *testing.T) {
 		var ran []string
 		r := run(t)
-		r.Settle("upgrade-goren", plan.Failed, at, errors.New("boom"))
+		r.Settle("upgrade-server-a", plan.Failed, at, errors.New("boom"))
 
 		runner, _ := build(t, r, every(&ran), nil)
-		if err := runner.Task(t.Context(), "upgrade-goren"); err != nil {
+		if err := runner.Task(t.Context(), "upgrade-server-a"); err != nil {
 			t.Fatalf("Task: %v", err)
 		}
-		if got := r.Outcome("upgrade-goren"); got != plan.Succeeded {
-			t.Errorf("upgrade-goren = %s, want the retry recorded", got)
+		if got := r.Outcome("upgrade-server-a"); got != plan.Succeeded {
+			t.Errorf("upgrade-server-a = %s, want the retry recorded", got)
 		}
 
 		// And the loop now gets past it.

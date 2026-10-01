@@ -1,0 +1,165 @@
+# -------------------------------------------------------------------------------
+# Test Cluster - A Vault Fleet The Tool Can Actually Roll
+#
+# Author: Alex Freidah
+#
+# Three Vault servers, and two services they need that are not part of the
+# fleet being upgraded:
+#
+#   consul-storage  where Vault keeps its data. The cluster this tool is
+#                   written for stores in Consul rather than in raft of its
+#                   own, which is why nothing in a Vault survey votes. A fleet
+#                   on raft would exercise different code.
+#   vault-seal      a dev-mode Vault providing a transit key, standing in for
+#                   OCI KMS. What matters is that a node restarts and comes
+#                   back unsealed with nobody typing anything.
+#
+# Both are pinned and never upgraded: they are the environment the fleet runs
+# in, and a survey never sees them. Only vault-server-1..3 are in the fleet.
+#
+# There is no client stage. Vault has no agent that this pin drives -- the
+# vault-agent on a real node installs from apt -- so the fleet is the servers
+# and nothing else.
+#
+#   make cluster-up    TOOL=vault     start it on the default older version
+#   make cluster-down  TOOL=vault     stop it and discard its state
+#
+# The names and the count are this file's own. No part of the real fleet
+# belongs in this repository, and nothing here is read by the tool: topology is
+# discovered from the API at runtime.
+# -------------------------------------------------------------------------------
+
+# Named, so the three environments are separate projects and can run at once.
+name: hashi-vault
+
+x-node: &node
+  build:
+    context: ../node
+    args:
+      TOOL: vault
+      FROM_VERSION: ${FROM_VERSION:-2.0.3}
+  networks: [vault]
+  environment:
+    CINC_SERVER: http://cinc-server:8889/organizations/test
+    CONSUL_STORAGE_ADDR: consul-storage:8500
+    TRANSIT_ADDR: http://vault-seal:8200
+    TRANSIT_TOKEN: seal-root
+    VAULT_ADDR: http://127.0.0.1:8200
+  depends_on:
+    cinc-server:
+      condition: service_started
+    consul-storage:
+      condition: service_healthy
+    vault-seal:
+      condition: service_healthy
+  healthcheck:
+    # Initialised and unsealed, not merely listening. A sealed Vault answers
+    # this port and serves nothing, so a check that only connected would call
+    # the fleet ready before it was.
+    test: ["CMD-SHELL", "vault status -format=json | jq -e '.initialized == true and .sealed == false'"]
+    interval: 3s
+    timeout: 3s
+    retries: 40
+
+services:
+  # Vault's storage. Dev mode because none of its data outlives the fleet and
+  # nothing here tests Consul -- the Consul environment does that.
+  consul-storage:
+    image: hashicorp/consul:1.22.7
+    container_name: vault-test-storage
+    command: ["agent", "-dev", "-client=0.0.0.0"]
+    networks: [vault]
+    healthcheck:
+      test: ["CMD", "consul", "info"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  # Stands in for OCI KMS. Dev mode gives a known root token and an
+  # already-unsealed Vault, so the fleet has something to unseal against the
+  # moment it starts.
+  vault-seal:
+    image: hashicorp/vault:2.1.1
+    container_name: vault-test-seal
+    cap_add: [IPC_LOCK]
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: seal-root
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+      VAULT_ADDR: http://127.0.0.1:8200
+      VAULT_TOKEN: seal-root
+    networks: [vault]
+    healthcheck:
+      # The transit mount is created by the check itself, on first success.
+      # A separate one-shot service would need its own image and ordering for
+      # two commands that are both idempotent.
+      test: ["CMD-SHELL", "vault secrets enable transit 2>/dev/null; vault write -f transit/keys/unseal 2>/dev/null; vault read transit/keys/unseal"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+  # Signature verification is off so the node-side converge can read the pin
+  # with a plain request. What the tool sends is signed either way, and that
+  # signing is covered against a server that verifies it in the unit tests.
+  cinc-server:
+    build:
+      context: ../cinc
+    container_name: vault-test-cinc
+    command:
+      - --addr=0.0.0.0:8889
+      - --orgs=test
+      - --no-auth
+    ports:
+      # A port of its own, so this fleet and the other two coexist.
+      - "8891:8889"
+    networks: [vault]
+
+  # The only Vault publishing a port. A run reads the cluster through any node
+  # -- a standby forwards to the active one -- so exposing one keeps VAULT_ADDR
+  # fixed while the active node moves during the run.
+  #
+  # hostname is set on every node because Vault names itself after it, and
+  # Docker defaults it to the container id, which makes a run's output a wall
+  # of hex with no way to tell which host is which.
+  vault-server-1:
+    <<: *node
+    container_name: vault-test-server-1
+    hostname: vault-server-1
+    environment:
+      CINC_SERVER: http://cinc-server:8889/organizations/test
+      CONSUL_STORAGE_ADDR: consul-storage:8500
+      TRANSIT_ADDR: http://vault-seal:8200
+      TRANSIT_TOKEN: seal-root
+      VAULT_ADDR: http://127.0.0.1:8200
+      NODE_NAME: vault-server-1
+      # One node initialises the shared storage. The others wait for it.
+      VAULT_BOOTSTRAP: "1"
+    ports:
+      - "8200:8200"
+
+  vault-server-2:
+    <<: *node
+    container_name: vault-test-server-2
+    hostname: vault-server-2
+    environment:
+      CINC_SERVER: http://cinc-server:8889/organizations/test
+      CONSUL_STORAGE_ADDR: consul-storage:8500
+      TRANSIT_ADDR: http://vault-seal:8200
+      TRANSIT_TOKEN: seal-root
+      VAULT_ADDR: http://127.0.0.1:8200
+      NODE_NAME: vault-server-2
+
+  vault-server-3:
+    <<: *node
+    container_name: vault-test-server-3
+    hostname: vault-server-3
+    environment:
+      CINC_SERVER: http://cinc-server:8889/organizations/test
+      CONSUL_STORAGE_ADDR: consul-storage:8500
+      TRANSIT_ADDR: http://vault-seal:8200
+      TRANSIT_TOKEN: seal-root
+      VAULT_ADDR: http://127.0.0.1:8200
+      NODE_NAME: vault-server-3
+
+networks:
+  vault:
+    driver: bridge

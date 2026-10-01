@@ -1,0 +1,79 @@
+#!/bin/sh
+# -------------------------------------------------------------------------------
+# vault-bootstrap - Initialise The Cluster Once
+#
+# Author: Alex Freidah
+#
+# A Vault cluster has to be initialised before it serves anything, and exactly
+# once: the three nodes share one storage backend, so whichever node does it
+# initialises all of them.
+#
+# Runs in the background behind the server it is initialising, because the
+# server has to be answering before it can be asked. Only the node the compose
+# file designates does the work; the others wait for storage to report the
+# cluster initialised and then do nothing, which is also what every restart
+# after the first does.
+#
+# Recovery shares rather than unseal shares: with a seal that unseals the node
+# for us, the shares exist only to authorise recovery and nothing here uses
+# them. One of one, because a test fleet has nobody to distribute them to.
+# -------------------------------------------------------------------------------
+
+set -eu
+
+readonly addr=http://127.0.0.1:8200
+export VAULT_ADDR="$addr"
+
+log() { printf '[vault-bootstrap] %s\n' "$*"; }
+
+# Both of these read the answer rather than the exit status, because `vault
+# status` exits 2 for a Vault that is sealed or uninitialised -- which is
+# exactly the Vault this script exists to deal with. Testing the exit code
+# instead waits out the whole timeout against a server answering every time.
+initialized() {
+  vault status -format=json 2>/dev/null | jq -e '.initialized == true' >/dev/null 2>&1
+}
+
+answering() {
+  vault status -format=json 2>/dev/null | jq -e . >/dev/null 2>&1
+}
+
+# The server comes up behind this script, so the first few attempts failing is
+# ordinary rather than a problem.
+waited=0
+while ! answering; do
+  waited=$((waited + 1))
+  if [ "$waited" -gt 60 ]; then
+    log "vault did not start answering"
+    exit 1
+  fi
+  sleep 1
+done
+
+if initialized; then
+  log "already initialised"
+  exit 0
+fi
+
+if [ "${VAULT_BOOTSTRAP:-0}" != "1" ]; then
+  log "waiting for another node to initialise the cluster"
+  exit 0
+fi
+
+log "initialising"
+
+# Kept rather than discarded: reading sys/ha-status needs a token, so a fleet
+# that threw away the only one it will ever mint could not be surveyed. Written
+# where `make cluster-up` reads it back out.
+readonly keys=/opt/vault/init.json
+
+if ! vault operator init -format=json -recovery-shares=1 -recovery-threshold=1 > "$keys".tmp; then
+  # Another node winning the race is the expected outcome, not a failure.
+  rm -f "$keys".tmp
+  log "initialisation refused; another node likely got there first"
+  exit 0
+fi
+
+mv "$keys".tmp "$keys"
+chmod 600 "$keys"
+log "initialised; root token in $keys"

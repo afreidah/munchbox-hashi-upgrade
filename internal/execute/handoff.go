@@ -66,20 +66,25 @@ func handoff(deps *Deps) runner.Step {
 	}
 }
 
-// successor picks the voter coordination is handed to.
+// successor picks the host coordination is handed to.
 //
 // Ordered by name rather than by whatever order the cluster reported, so the
 // same cluster hands over to the same host twice and a run that is replayed
-// reads alike. Any healthy voter is a valid destination; determinism is the
-// only thing being bought here.
+// reads alike. Any host fit to take over is a valid destination; determinism is
+// the only thing being bought here.
+//
+// Voting is required only where coordination runs on a quorum of these hosts.
+// A cluster whose quorum lives in its storage backend has no voters at all, and
+// requiring one leaves every host unfit and no successor to be found.
 func successor(cluster plan.Cluster, from string) (plan.Member, error) {
-	var unfit []string
+	votes := cluster.Votes()
 
+	var unfit []string
 	for _, m := range cluster.OfKind(plan.KindServer) {
 		if m.Name == from {
 			continue
 		}
-		if m.Voter && m.Healthy {
+		if m.Healthy && (m.Voter || !votes) {
 			return m, nil
 		}
 		unfit = append(unfit, m.Name)
@@ -89,5 +94,5 @@ func successor(cluster plan.Cluster, from string) (plan.Member, error) {
 		return plan.Member{}, errors.New("no other server can take coordination")
 	}
 	return plan.Member{}, fmt.Errorf(
-		"no healthy voter can take coordination from %s; unfit: %v", from, unfit)
+		"no host can take coordination from %s; unfit: %v", from, unfit)
 }

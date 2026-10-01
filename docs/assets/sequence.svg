@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 560" role="img" aria-labelledby="title desc">
+  <title id="title">The order a fleet is rolled in</title>
+  <desc id="desc">Four stages. Survey stops the scheduled converges and then moves the version pin. The server stage upgrades each non-coordinating host in turn, hands coordination off, then upgrades the host that had it. The client stage upgrades each host that carries work. Verify reads the fleet back and only then releases the converges. Every host is followed by a gate that polls the cluster until it reports the host back at the target version, healthy and in service. The first host upgraded is the point past which the fleet is part-upgraded and finishing is the safe direction.</desc>
+  <defs>
+    <style>
+      .t{font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+      .label{font-size:19px;font-weight:700;fill:#f8fafc}
+      .small{font-size:14px;font-weight:600;fill:#c9ccd3}
+      .micro{font-size:14px;font-weight:700;fill:#ff8340;letter-spacing:.08em}
+      .gate{font-size:13px;font-weight:700;fill:#ff8340}
+      .line{fill:none;stroke:#fc6718;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}
+      .dash{fill:none;stroke:#9a9ea6;stroke-width:2.5;stroke-dasharray:7 6;stroke-linecap:round;stroke-linejoin:round}
+      .card{fill:#15171c;stroke:#fc6718;stroke-width:2}
+      .quiet{fill:#15171c;stroke:#9a9ea6;stroke-width:2}
+      .gatebox{fill:#1d1410;stroke:#ff8340;stroke-width:2;stroke-dasharray:6 5}
+    </style>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0l10 5-10 5z" fill="#fc6718"/></marker>
+    <marker id="arrow-grey" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0l10 5-10 5z" fill="#9a9ea6"/></marker>
+  </defs>
+  <g class="t">
+
+    <!-- Survey -->
+    <text x="40" y="36" class="micro">SURVEY: BEFORE ANY HOST IS TOUCHED</text>
+    <rect x="40" y="56" width="250" height="86" rx="20" class="card"/>
+    <rect x="360" y="56" width="250" height="86" rx="20" class="card"/>
+    <path class="line" marker-end="url(#arrow)" d="M290 99H360"/>
+    <g text-anchor="middle">
+      <text x="165" y="94" class="label">freeze converges</text><text x="165" y="120" class="small">fleet-wide, before the pin</text>
+      <text x="485" y="94" class="label">move the pin</text><text x="485" y="120" class="small">once, centrally</text>
+    </g>
+    <text x="660" y="88" class="small">A converge landing between these two would</text>
+    <text x="660" y="110" class="small">upgrade a host out of order and unobserved.</text>
+
+    <!-- Point of no return -->
+    <path class="line" marker-end="url(#arrow)" d="M485 142V176"/>
+    <text x="520" y="168" class="micro">POINT OF NO RETURN</text>
+
+    <!-- Servers, then clients -->
+    <text x="40" y="226" class="micro">SERVERS: ONE AT A TIME, COORDINATOR LAST</text>
+    <text x="910" y="226" class="micro">THEN CLIENTS</text>
+    <rect x="40" y="246" width="210" height="86" rx="20" class="card"/>
+    <rect x="330" y="246" width="210" height="86" rx="20" class="card"/>
+    <rect x="620" y="246" width="210" height="86" rx="20" class="card"/>
+    <rect x="910" y="246" width="210" height="86" rx="20" class="card"/>
+    <path class="line" marker-end="url(#arrow)" d="M250 289H330"/>
+    <path class="line" marker-end="url(#arrow)" d="M540 289H620"/>
+    <path class="line" marker-end="url(#arrow)" d="M830 289H910"/>
+    <g text-anchor="middle">
+      <text x="145" y="284" class="label">upgrade</text><text x="145" y="310" class="small">each non-coordinator</text>
+      <text x="435" y="284" class="label">hand off</text><text x="435" y="310" class="small">coordination moves</text>
+      <text x="725" y="284" class="label">upgrade</text><text x="725" y="310" class="small">the host that had it</text>
+      <text x="1015" y="284" class="label">clients</text><text x="1015" y="310" class="small">each, in turn</text>
+    </g>
+
+    <!-- Gates -->
+    <g text-anchor="middle">
+      <text x="290" y="356" class="gate">gate</text>
+      <text x="580" y="356" class="gate">gate</text>
+      <text x="870" y="356" class="gate">gate</text>
+    </g>
+    <path class="dash" d="M290 332V344"/>
+    <path class="dash" d="M580 332V344"/>
+    <path class="dash" d="M870 332V344"/>
+
+    <rect x="40" y="372" width="1080" height="68" rx="20" class="gatebox"/>
+    <text x="580" y="402" text-anchor="middle" class="label">Read the cluster until it reports the host back</text>
+    <text x="580" y="426" text-anchor="middle" class="small">running the target version, healthy, and in service; a timeout reports the condition it gave up on</text>
+
+    <!-- Verify -->
+    <text x="40" y="490" class="micro">VERIFY: IN THIS ORDER</text>
+    <path class="line" marker-end="url(#arrow)" d="M580 440V468"/>
+    <rect x="300" y="498" width="250" height="48" rx="16" class="card"/>
+    <rect x="620" y="498" width="250" height="48" rx="16" class="card"/>
+    <path class="line" marker-end="url(#arrow)" d="M550 522H620"/>
+    <g text-anchor="middle">
+      <text x="425" y="528" class="small">read the whole fleet back</text>
+      <text x="745" y="528" class="small">release the converges</text>
+    </g>
+    <text x="40" y="528" class="small">A host the survey missed</text>
+    <text x="40" y="546" class="small">passes every gate.</text>
+  </g>
+</svg>

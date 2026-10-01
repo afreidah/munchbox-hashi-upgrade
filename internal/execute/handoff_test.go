@@ -34,6 +34,15 @@ func voter(name string, primary bool) plan.Member {
 	}
 }
 
+// unvoting is a server in a cluster whose coordination does not run on a
+// quorum of its own members, as a Vault cluster keeping its data in Consul
+// does not.
+func unvoting(name string, primary bool) plan.Member {
+	m := voter(name, primary)
+	m.Voter = false
+	return m
+}
+
 func handoffTask() plan.Task {
 	return task(steps.CommandHandoff, map[string]any{"from": "server-b"})
 }
@@ -64,6 +73,51 @@ func TestHandoffTransfersToAHealthyVoterAndWaits(t *testing.T) {
 
 	if _, err := handoff(deps)(context.Background(), handoffTask()); err != nil {
 		t.Fatalf("handoff: %v", err)
+	}
+}
+
+// Voting is required of a successor only where coordination runs on a quorum
+// of these hosts. Where it does not, every host would be unfit and there would
+// be no successor to hand to -- which leaves a run unable to touch the host
+// that coordinates.
+func TestSuccessorDoesNotRequireAVoterWhereNothingVotes(t *testing.T) {
+	cluster := coordinating(
+		unvoting("server-a", false),
+		unvoting("server-b", true),
+		unvoting("server-c", false),
+	)
+
+	got, err := successor(cluster, "server-b")
+	if err != nil {
+		t.Fatalf("successor: %v", err)
+	}
+	if got.Name != "server-a" {
+		t.Errorf("successor = %s, want server-a", got.Name)
+	}
+}
+
+// Where the cluster does vote, a non-voter cannot take coordination, so the
+// requirement is not merely dropped.
+func TestSuccessorStillRequiresAVoterWhereTheClusterVotes(t *testing.T) {
+	a := voter("server-a", false)
+	a.Voter = false
+
+	cluster := coordinating(a, voter("server-b", true))
+
+	if _, err := successor(cluster, "server-b"); err == nil {
+		t.Error("a non-voter was picked in a voting cluster")
+	}
+}
+
+// An unhealthy host cannot take coordination whether anything votes or not.
+func TestSuccessorRefusesAnUnhealthyHost(t *testing.T) {
+	a := unvoting("server-a", false)
+	a.Healthy = false
+
+	cluster := coordinating(a, unvoting("server-b", true))
+
+	if _, err := successor(cluster, "server-b"); err == nil {
+		t.Error("an unhealthy host was picked")
 	}
 }
 

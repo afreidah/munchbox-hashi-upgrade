@@ -40,7 +40,7 @@ func stopped() map[string]answer {
 
 func TestFreeze(t *testing.T) {
 	t.Run("stops the timer and confirms both halves", func(t *testing.T) {
-		n := &node{host: "goren", replies: stopped()}
+		n := &node{host: "server-a", replies: stopped()}
 		fleet, targets := stand(t, n)
 
 		if err := fleet.Freeze(t.Context(), targets); err != nil {
@@ -55,7 +55,7 @@ func TestFreeze(t *testing.T) {
 	// A timer that is still up after being disabled has not been frozen, and a
 	// clean exit from is-active is what says so.
 	t.Run("refuses a timer that survived the disable", func(t *testing.T) {
-		n := &node{host: "goren", replies: map[string]answer{
+		n := &node{host: "server-a", replies: map[string]answer{
 			isActiveCmd: {res: ssh.Result{Output: "active\n"}},
 		}}
 		fleet, targets := stand(t, n)
@@ -74,7 +74,7 @@ func TestFreeze(t *testing.T) {
 	t.Run("refuses a converge already in flight", func(t *testing.T) {
 		replies := stopped()
 		replies[lockCmd] = answer{res: ssh.Result{Code: lockBusyCode}}
-		fleet, targets := stand(t, &node{host: "stabler", replies: replies})
+		fleet, targets := stand(t, &node{host: "server-b", replies: replies})
 
 		if err := fleet.Freeze(t.Context(), targets); !errors.Is(err, ErrConvergeInFlight) {
 			t.Errorf("Freeze error = %v, want %v", err, ErrConvergeInFlight)
@@ -86,7 +86,7 @@ func TestFreeze(t *testing.T) {
 	t.Run("reports a lock check that failed", func(t *testing.T) {
 		replies := stopped()
 		replies[lockCmd] = answer{res: ssh.Result{Output: "flock: bad file descriptor", Code: 1}}
-		fleet, targets := stand(t, &node{host: "stabler", replies: replies})
+		fleet, targets := stand(t, &node{host: "server-b", replies: replies})
 
 		err := fleet.Freeze(t.Context(), targets)
 		switch {
@@ -98,7 +98,7 @@ func TestFreeze(t *testing.T) {
 	})
 
 	t.Run("reports a disable that was refused", func(t *testing.T) {
-		n := &node{host: "goren", replies: map[string]answer{
+		n := &node{host: "server-a", replies: map[string]answer{
 			disableCmd: {res: ssh.Result{Output: "Failed to disable unit", Code: 1}},
 		}}
 		fleet, targets := stand(t, n)
@@ -119,7 +119,7 @@ func TestFreeze(t *testing.T) {
 				want := errors.New("session closed")
 				replies := stopped()
 				replies[cmd] = answer{err: want}
-				fleet, targets := stand(t, &node{host: "goren", replies: replies})
+				fleet, targets := stand(t, &node{host: "server-a", replies: replies})
 
 				if err := fleet.Freeze(t.Context(), targets); !errors.Is(err, want) {
 					t.Errorf("Freeze error = %v, want %v", err, want)
@@ -134,10 +134,10 @@ func TestFreeze(t *testing.T) {
 		busy := stopped()
 		busy[lockCmd] = answer{res: ssh.Result{Code: lockBusyCode}}
 
-		good := &node{host: "goren", replies: stopped()}
+		good := &node{host: "server-a", replies: stopped()}
 		fleet, targets := stand(t,
 			good,
-			&node{host: "stabler", replies: busy},
+			&node{host: "server-b", replies: busy},
 			&node{host: "oraclenode1", dialErr: errors.New("no route to host")},
 		)
 
@@ -145,7 +145,7 @@ func TestFreeze(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected an error naming the nodes that failed")
 		}
-		for _, host := range []string{"stabler", "oraclenode1"} {
+		for _, host := range []string{"server-b", "oraclenode1"} {
 			if !strings.Contains(err.Error(), host) {
 				t.Errorf("Freeze error %q does not name %s", err, host)
 			}
@@ -161,7 +161,7 @@ func TestFreeze(t *testing.T) {
 
 func TestThaw(t *testing.T) {
 	t.Run("starts the timer on every node", func(t *testing.T) {
-		nodes := []*node{{host: "goren"}, {host: "stabler"}}
+		nodes := []*node{{host: "server-a"}, {host: "server-b"}}
 		fleet, targets := stand(t, nodes[0], nodes[1])
 
 		if err := fleet.Thaw(t.Context(), targets); err != nil {
@@ -177,10 +177,10 @@ func TestThaw(t *testing.T) {
 	// Thaw is the last compensation to unwind, so one node refusing must not
 	// leave the others on a stopped timer.
 	t.Run("thaws the rest when one node refuses", func(t *testing.T) {
-		bad := &node{host: "goren", replies: map[string]answer{
+		bad := &node{host: "server-a", replies: map[string]answer{
 			enableCmd: {res: ssh.Result{Output: "Failed to enable unit", Code: 1}},
 		}}
-		good := &node{host: "stabler"}
+		good := &node{host: "server-b"}
 		fleet, targets := stand(t, bad, good)
 
 		err := fleet.Thaw(t.Context(), targets)
@@ -198,9 +198,9 @@ func TestThaw(t *testing.T) {
 
 func TestNodeError(t *testing.T) {
 	inner := errors.New("boom")
-	err := &NodeError{Target: ssh.Target{Host: "goren"}, Err: inner}
+	err := &NodeError{Target: ssh.Target{Host: "server-a"}, Err: inner}
 
-	if !strings.Contains(err.Error(), "goren") {
+	if !strings.Contains(err.Error(), "server-a") {
 		t.Errorf("Error() = %q, want the host named", err)
 	}
 	if !errors.Is(err, inner) {

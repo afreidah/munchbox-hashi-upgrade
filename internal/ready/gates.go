@@ -44,8 +44,8 @@ const minTolerance = 1
 // from before the restart and the gate would wait out its timeout on a host
 // that had already arrived.
 func (g *Gate) Server(ctx context.Context, name, target string) error {
-	what := fmt.Sprintf("%s rejoining as a voter at %s", name, target)
-	arrived := fmt.Sprintf("%s is running %s, healthy, and voting again", name, target)
+	what := fmt.Sprintf("%s rejoining the cluster at %s", name, target)
+	arrived := fmt.Sprintf("%s is running %s, healthy, and back in the cluster", name, target)
 
 	return g.await(ctx, what, arrived, func(cluster plan.Cluster) error {
 		m, err := member(cluster, name)
@@ -58,7 +58,10 @@ func (g *Gate) Server(ctx context.Context, name, target string) error {
 			return fmt.Errorf("%s is running %s, not %s", name, m.Version, target)
 		case !m.Healthy:
 			return fmt.Errorf("%s is not healthy", name)
-		case !m.Voter:
+		// Asked only where coordination runs on a quorum of these members. A
+		// cluster whose quorum lives in its storage backend has no voters at
+		// all, and requiring one would hold every host here until it timed out.
+		case cluster.Votes() && !m.Voter:
 			return fmt.Errorf("%s is not a voter", name)
 		case !cluster.Healthy:
 			return fmt.Errorf("%s rejoined but the cluster is not healthy", name)

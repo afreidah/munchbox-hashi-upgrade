@@ -21,6 +21,7 @@ import (
 
 	"github.com/afreidah/munchbox-hashi-upgrade/internal/clients/consul"
 	"github.com/afreidah/munchbox-hashi-upgrade/internal/clients/nomad"
+	"github.com/afreidah/munchbox-hashi-upgrade/internal/clients/vault"
 	"github.com/afreidah/munchbox-hashi-upgrade/internal/plan"
 )
 
@@ -57,7 +58,7 @@ func For(tool plan.Tool, opts Options) (Cluster, error) {
 	case plan.Consul:
 		return consul.New(consul.Options{Address: opts.Address})
 	case plan.Vault:
-		return nil, fmt.Errorf("%s is not supported yet", tool)
+		return vault.New(vault.Options{Address: opts.Address})
 	default:
 		return nil, fmt.Errorf("unknown tool %q; expected nomad, consul or vault", tool)
 	}

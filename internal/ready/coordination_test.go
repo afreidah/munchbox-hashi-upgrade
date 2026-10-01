@@ -17,11 +17,11 @@ import (
 )
 
 // leader is the host the test fleet coordinates on.
-const leader = "nomad-server-03"
+const leader = "server-c"
 
 func TestCoordination(t *testing.T) {
 	t.Run("passes a host that is not the one coordinating", func(t *testing.T) {
-		if err := gate(t, read{cluster: fleet()}).Coordination(t.Context(), "goren"); err != nil {
+		if err := gate(t, read{cluster: fleet()}).Coordination(t.Context(), "server-a"); err != nil {
 			t.Errorf("Coordination: %v", err)
 		}
 	})
@@ -44,7 +44,7 @@ func TestCoordination(t *testing.T) {
 		cluster := fleet()
 		cluster.Healthy = false
 
-		err := gate(t, read{cluster: cluster}).Coordination(t.Context(), "goren")
+		err := gate(t, read{cluster: cluster}).Coordination(t.Context(), "server-a")
 		refuses(t, err, "not healthy")
 	})
 
@@ -53,7 +53,7 @@ func TestCoordination(t *testing.T) {
 	t.Run("passes once a later read shows the move", func(t *testing.T) {
 		moved := dent(leader, func(m *plan.Member) { m.Primary = false })
 		for i := range moved.Members {
-			if moved.Members[i].Name == "goren" {
+			if moved.Members[i].Name == "server-a" {
 				moved.Members[i].Primary = true
 			}
 		}
