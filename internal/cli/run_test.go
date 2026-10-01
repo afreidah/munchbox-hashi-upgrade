@@ -132,27 +132,35 @@ func TestBothModeFlagsTogetherIsRefused(t *testing.T) {
 // END TO END, WITHOUT A CLUSTER
 // -------------------------------------------------------------------------
 
-// The file is the journal: a no-op settles every task and writes the outcome
-// back, so the same file reopened reports the run as finished.
-func TestNoOpWorksThroughTheFileAndRecordsProgress(t *testing.T) {
-	path := written(t, runFile)
+// A rehearsal must leave the file as it found it.
+//
+// It settles its tasks in memory so the loop advances, and unnecessary counts
+// as settled -- so writing that would mark the file finished, and the real run
+// against it would find nothing to do and report success for an upgrade it
+// never performed. That is what happened the first time this was driven
+// against a live fleet.
+func TestARehearsalDoesNotConsumeTheRunFile(t *testing.T) {
+	for _, mode := range []string{"--no-op", "--dry-run"} {
+		t.Run(mode, func(t *testing.T) {
+			path := written(t, runFile)
 
-	out, err := execRun(t, "--no-op", path)
-	if err != nil {
-		t.Fatalf("run: %v\n%s", err, out)
-	}
+			if out, err := execRun(t, mode, "--yes", path); err != nil {
+				t.Fatalf("run: %v\n%s", err, out)
+			}
 
-	run, err := plan.Open(path)
-	if err != nil {
-		t.Fatalf("reopen: %v", err)
-	}
-	if !run.Finished() {
-		t.Error("the run did not finish")
-	}
-	for _, task := range run.Tasks {
-		if got := run.Outcome(task.ID); got != plan.Unnecessary {
-			t.Errorf("%s outcome = %q, want %q", task.ID, got, plan.Unnecessary)
-		}
+			run, err := plan.Open(path)
+			if err != nil {
+				t.Fatalf("reopen: %v", err)
+			}
+			if run.Finished() {
+				t.Error("a rehearsal left the run file finished")
+			}
+			for _, task := range run.Tasks {
+				if got := run.Outcome(task.ID); got != plan.Waiting {
+					t.Errorf("%s outcome = %q, want %q", task.ID, got, plan.Waiting)
+				}
+			}
+		})
 	}
 }
 
@@ -202,17 +210,15 @@ func TestARunRefusesACommandWithNoImplementation(t *testing.T) {
 func TestResetPutsATaskBackIntoPlay(t *testing.T) {
 	path := written(t, runFile)
 
-	// Settle both tasks, then fail the second, which is what a run that broke
-	// on the pin would have left behind.
-	if _, err := execRun(t, "--no-op", path); err != nil {
-		t.Fatalf("first pass: %v", err)
-	}
-
+	// What a run that broke on the pin would have left behind: the freeze
+	// done, the pin failed.
 	run, err := plan.Open(path)
 	if err != nil {
-		t.Fatalf("reopen: %v", err)
+		t.Fatalf("open: %v", err)
 	}
-	run.Settle("set-version-pin", plan.Failed, time.Now().UTC(), errors.New("boom"))
+	now := time.Now().UTC()
+	run.Settle("freeze-converge-timers", plan.Succeeded, now, nil)
+	run.Settle("set-version-pin", plan.Failed, now, errors.New("boom"))
 	if err := run.Save(); err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -226,17 +232,25 @@ func TestResetPutsATaskBackIntoPlay(t *testing.T) {
 		t.Errorf("err = %v, want it to name the command that resolves it", err)
 	}
 
-	// With it, the task is reached again and the run finishes.
-	if out, err := execRun(t, "--no-op", "--reset", "set-version-pin", path); err != nil {
+	// With it, the record is cleared and the run works past the task rather
+	// than landing on it.
+	out, err = execRun(t, "--no-op", "--reset", "set-version-pin", path)
+	if err != nil {
 		t.Fatalf("run after reset: %v\n%s", err, out)
 	}
+	if !strings.Contains(out, "forgetting set-version-pin") {
+		t.Errorf("output = %q, want it to report the reset", out)
+	}
 
+	// The reset is saved even though the rehearsal that followed it is not:
+	// forgetting a task is the operator's decision about the file, not an
+	// outcome of the run.
 	after, err := plan.Open(path)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
-	if !after.Finished() {
-		t.Error("the run did not finish after the reset")
+	if got := after.Outcome("set-version-pin"); got != plan.Waiting {
+		t.Errorf("outcome = %q, want %q after the reset", got, plan.Waiting)
 	}
 }
 

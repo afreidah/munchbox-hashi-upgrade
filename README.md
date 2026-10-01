@@ -17,6 +17,11 @@ hashi-upgrade run nomad-*.yaml          # carry it out
 hashi-upgrade status nomad-*.yaml       # read where it got to
 ```
 
+Before a live run, `scripts/preflight.sh <run-file>` reaches every host the run
+will dial and checks `cinc-client` is there and its timer is running. A dry run
+builds no ssh client, so that leg is otherwise untested until a run is already
+underway and the pin has moved.
+
 `run` resumes: it starts from the first task that has not settled, so a run
 that stopped is continued by naming the same file again. It will not step over
 a task that failed or never reported back -- whether that one took effect is
