@@ -62,7 +62,7 @@ COPY keys/user_key.pub /root/.ssh/authorized_keys
 COPY sbin/ /usr/local/sbin/
 
 RUN chmod 600 /etc/ssh/ssh_host_ed25519_key /root/.ssh/authorized_keys \
- && chmod 755 /usr/local/sbin/cinc-client /usr/local/sbin/systemctl /usr/local/sbin/node-entrypoint \
+ && chmod 755 /usr/local/sbin/* \
  && printf '%s\n' \
       'HostKey /etc/ssh/ssh_host_ed25519_key' \
       'HostCertificate /etc/ssh/ssh_host_ed25519_key-cert.pub' \

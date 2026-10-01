@@ -126,11 +126,31 @@ ifeq ($(TOOL),consul)
   CLUSTER_ENV  := CONSUL_HTTP_ADDR
   CINC_PORT    := 8890
   FROM_VERSION ?= 2.0.3
+  MEMBERS      := members
+else ifeq ($(TOOL),vault)
+  CLUSTER_ADDR := http://127.0.0.1:8200
+  CLUSTER_ENV  := VAULT_ADDR
+  CINC_PORT    := 8891
+  FROM_VERSION ?= 2.0.4
+  # The same read the survey makes, and the only one of the three that needs a
+  # token.
+  MEMBERS      := operator members
 else
   CLUSTER_ADDR := http://127.0.0.1:4646
   CLUSTER_ENV  := NOMAD_ADDR
   CINC_PORT    := 8889
   FROM_VERSION ?= 2.0.5
+  MEMBERS      := server members
+endif
+
+# What a run authenticates with, for the tools that need it. Nomad and Consul
+# answer an unauthenticated read in this fleet; Vault does not, and the only
+# token it will ever mint is the one its own initialisation produced -- so it is
+# read back out of the node that wrote it, at the moment it is needed rather
+# than when this file is parsed.
+ifeq ($(TOOL),vault)
+  CLUSTER_AUTH = VAULT_TOKEN=$(shell docker exec vault-test-server-1 \
+    sh -c 'jq -r .root_token /opt/vault/init.json' 2>/dev/null)
 endif
 
 KEYS := test/node/keys
@@ -159,14 +179,15 @@ $(KEYS)/user_key:
 	ssh-keygen -q -t rsa -b 2048 -m PEM -N '' -C hashi-upgrade -f $(KEYS)/cinc_key
 	@printf '\nssh material written to %s\n' '$(KEYS)'
 
-cluster-up: cluster-keys ## Start a local fleet (3 servers, 2 clients) for TOOL on FROM_VERSION
+cluster-up: cluster-keys ## Start a local fleet for TOOL on FROM_VERSION
 	# --remove-orphans: a service renamed between versions of this file leaves a
 	# container compose no longer knows about, still holding the published port.
 	FROM_VERSION=$(FROM_VERSION) $(COMPOSE) up -d --build --wait --remove-orphans
-	@printf '\n%s fleet is on %s\nexport %s=%s\n\n' \
+	@printf '\n%s fleet is on %s\nexport %s=%s\n' \
 		'$(TOOL)' '$(FROM_VERSION)' '$(CLUSTER_ENV)' '$(CLUSTER_ADDR)'
-	@$(CLUSTER_ENV)=$(CLUSTER_ADDR) $(TOOL) members 2>/dev/null \
-		|| $(CLUSTER_ENV)=$(CLUSTER_ADDR) $(TOOL) server members 2>/dev/null || true
+	@$(if $(CLUSTER_AUTH),printf 'export %s\n' '$(CLUSTER_AUTH)',true)
+	@printf '\n'
+	@$(CLUSTER_ENV)=$(CLUSTER_ADDR) $(CLUSTER_AUTH) $(TOOL) $(MEMBERS) 2>/dev/null || true
 	@printf '\nnext: TOOL=%s make cluster-plan && TOOL=%s make cluster-run\n\n' '$(TOOL)' '$(TOOL)'
 
 cluster-down: ## Stop the local fleet and discard its state
@@ -188,6 +209,8 @@ CLUSTER_FLAGS := \
 # what it runs, so the test environment rehearses the upgrade actually faced.
 ifeq ($(TOOL),consul)
   TO ?= 2.0.4
+else ifeq ($(TOOL),vault)
+  TO ?= 2.1.1
 else
   TO ?= 2.0.7
 endif
@@ -197,12 +220,12 @@ endif
 RUN_FILE ?= $(shell ls -t $(TOOL)-*.yaml 2>/dev/null | head -1)
 
 cluster-plan: build ## Survey the local fleet and write a run file (TOOL=, TO=)
-	$(CLUSTER_ENV)=$(CLUSTER_ADDR) ./$(BINARY) plan $(TOOL) --to $(TO)
+	$(CLUSTER_ENV)=$(CLUSTER_ADDR) $(CLUSTER_AUTH) ./$(BINARY) plan $(TOOL) --to $(TO)
 
 cluster-run: build ## Drive the newest run file against the local fleet (ARGS=--yes)
 	@test -n "$(RUN_FILE)" || { echo "no $(TOOL) run file; run 'make cluster-plan' first"; exit 1; }
 	@printf 'driving %s\n\n' '$(RUN_FILE)'
-	$(CLUSTER_ENV)=$(CLUSTER_ADDR) ./$(BINARY) run $(RUN_FILE) $(CLUSTER_FLAGS) $(ARGS)
+	$(CLUSTER_ENV)=$(CLUSTER_ADDR) $(CLUSTER_AUTH) ./$(BINARY) run $(RUN_FILE) $(CLUSTER_FLAGS) $(ARGS)
 
 ##@ Housekeeping
 

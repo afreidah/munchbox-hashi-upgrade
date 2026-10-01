@@ -15,7 +15,15 @@
 set -eu
 
 # Which agent this node runs, written when the image was built.
-readonly tool="$(cat /etc/hashi-tool 2>/dev/null || echo nomad)"
+tool=$(cat /etc/hashi-tool 2>/dev/null || echo nomad)
+readonly tool
+
+# Nomad and Consul are long-running agents; Vault calls the same thing a
+# server. The subcommand is the only part of starting them that differs.
+case "$tool" in
+  vault) readonly subcommand=server ;;
+  *)     readonly subcommand=agent ;;
+esac
 
 # Nomad's client half enables controllers by writing cgroup.subtree_control on
 # the cgroup root, which cgroup v2 refuses while any process sits directly in
@@ -27,12 +35,21 @@ echo 1 > /sys/fs/cgroup/init/cgroup.procs 2>/dev/null || true
 ssh-keygen -A >/dev/null 2>&1 || true
 /usr/sbin/sshd -e
 
+# Vault reads a file rather than flags, and a cluster has to be initialised
+# once before it serves anything. The bootstrap runs behind the server because
+# the server has to be answering before it can be asked.
+if [ "$tool" = vault ]; then
+  vault-config
+  set -- -config=/etc/vault.d/vault.hcl "$@"
+  vault-bootstrap &
+fi
+
 # The pid is written where the shim looks for it, so a restart is a signal
 # rather than knowledge of how the agent was started.
 readonly pidfile=/var/run/agent.pid
 
 while true; do
-  "$tool" agent "$@" &
+  "$tool" "$subcommand" "$@" &
   echo $! > "$pidfile"
   wait $! || true
 
