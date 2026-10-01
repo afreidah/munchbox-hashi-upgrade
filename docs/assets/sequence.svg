@@ -6,15 +6,15 @@
       .t{font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
       .label{font-size:19px;font-weight:700;fill:#f8fafc}
       .small{font-size:14px;font-weight:600;fill:#c9ccd3}
-      .micro{font-size:14px;font-weight:700;fill:#ff8340;letter-spacing:.08em}
-      .gate{font-size:13px;font-weight:700;fill:#ff8340}
-      .line{fill:none;stroke:#fc6718;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}
+      .micro{font-size:14px;font-weight:700;fill:#4ade80;letter-spacing:.08em}
+      .gate{font-size:13px;font-weight:700;fill:#4ade80}
+      .line{fill:none;stroke:#22c55e;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}
       .dash{fill:none;stroke:#9a9ea6;stroke-width:2.5;stroke-dasharray:7 6;stroke-linecap:round;stroke-linejoin:round}
-      .card{fill:#15171c;stroke:#fc6718;stroke-width:2}
+      .card{fill:#15171c;stroke:#22c55e;stroke-width:2}
       .quiet{fill:#15171c;stroke:#9a9ea6;stroke-width:2}
-      .gatebox{fill:#1d1410;stroke:#ff8340;stroke-width:2;stroke-dasharray:6 5}
+      .gatebox{fill:#0f1f16;stroke:#4ade80;stroke-width:2;stroke-dasharray:6 5}
     </style>
-    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0l10 5-10 5z" fill="#fc6718"/></marker>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0l10 5-10 5z" fill="#22c55e"/></marker>
     <marker id="arrow-grey" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0l10 5-10 5z" fill="#9a9ea6"/></marker>
   </defs>
   <g class="t">
