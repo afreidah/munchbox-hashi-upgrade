@@ -205,19 +205,6 @@ func TestPlan_RejectsUnknownTool(t *testing.T) {
 	}
 }
 
-// Vault is a known tool the planner does not yet serve, which is a different
-// answer from a name it does not recognise at all. Consul used to be here and
-// is now served.
-func TestPlan_RejectsUnsupportedTool(t *testing.T) {
-	_, err := run(t, "plan", "vault", "--to", "2.0.3", "--dir", t.TempDir())
-	if err == nil {
-		t.Fatal("error = nil, want an unsupported tool to be refused")
-	}
-	if !strings.Contains(err.Error(), "not supported yet") {
-		t.Errorf("error = %v, want it to distinguish unsupported from unknown", err)
-	}
-}
-
 func TestPlan_RequiresATargetVersion(t *testing.T) {
 	if _, err := run(t, "plan", "nomad", "--dir", t.TempDir()); err == nil {
 		t.Fatal("error = nil, want a missing --to to be refused")

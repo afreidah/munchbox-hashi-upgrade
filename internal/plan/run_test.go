@@ -39,6 +39,35 @@ func TestToolKnown(t *testing.T) {
 	}
 }
 
+// Whether a cluster votes is read from its members rather than decided by the
+// tool, because it is a property of the deployment: a Vault cluster keeping its
+// data in Consul has no voters, and the same Vault on integrated raft storage
+// does.
+func TestClusterVotes(t *testing.T) {
+	server := func(voter bool) plan.Member {
+		return plan.Member{Kind: plan.KindServer, Voter: voter}
+	}
+
+	for _, c := range []struct {
+		name    string
+		members []plan.Member
+		want    bool
+	}{
+		{"nothing votes", []plan.Member{server(false), server(false)}, false},
+		{"every server votes", []plan.Member{server(true), server(true)}, true},
+		// One host mid-restart has dropped out of its quorum while its peers
+		// have not, so the cluster is still a voting one.
+		{"one is out of its quorum", []plan.Member{server(true), server(false)}, true},
+		{"no members at all", nil, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := (plan.Cluster{Members: c.members}).Votes(); got != c.want {
+				t.Errorf("Votes() = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
 // Only success and "did not need doing" let a run move on. Failed must not
 // settle, or a resumed run would step straight over the failure.
 func TestOutcomeSettled(t *testing.T) {
