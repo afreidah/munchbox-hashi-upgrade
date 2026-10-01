@@ -26,8 +26,14 @@ import (
 )
 
 // How long a gate waits, and how often it looks, when the caller says nothing.
+//
+// Ten minutes because the gate is waiting out a converge that installs a couple
+// of hundred megabytes, restarts a service, and rejoins a raft cluster. Three
+// minutes is inside that on a slow host, and a gate that gives up early fails a
+// run that was going to succeed -- which costs more than waiting, since the
+// operator then has to work out whether the host is wrong or merely unhurried.
 const (
-	DefaultTimeout  = 3 * time.Minute
+	DefaultTimeout  = 10 * time.Minute
 	DefaultInterval = 5 * time.Second
 )
 
