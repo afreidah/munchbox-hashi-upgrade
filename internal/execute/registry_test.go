@@ -127,12 +127,51 @@ func TestDryRunDoesNotCallAStepThatWrites(t *testing.T) {
 func TestDryRunCallsAStepThatOnlyReads(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
+	// Deliberately still on the old version. Holding the fleet against the
+	// target would fail every dry run ever done before an upgrade, so what a
+	// rehearsal asks is whether the cluster reads and is well.
 	survey := NewMockSurveyor(ctrl)
 	survey.EXPECT().
 		Health(gomock.Any()).
 		Return(plan.Cluster{
 			Healthy: true,
-			Members: []plan.Member{{Name: "server-a", Version: "2.0.6"}},
+			Members: []plan.Member{{Name: "server-a", Version: "2.0.5"}},
+		}, nil)
+
+	var out bytes.Buffer
+	deps := &Deps{Survey: survey, Out: &out, Mode: DryRun}
+
+	task := plan.Task{
+		Title:  "Confirm the fleet",
+		Action: plan.Action{Command: steps.CommandVerify, Args: map[string]any{"version": "2.0.6"}},
+	}
+	result, err := Steps(deps)[steps.CommandVerify](context.Background(), task)
+	if err != nil {
+		t.Fatalf("verify in a dry run: %v", err)
+	}
+
+	// Unnecessary rather than succeeded: readability was established, not the
+	// state of the fleet.
+	if result.Outcome != plan.Unnecessary {
+		t.Errorf("outcome = %q, want %q", result.Outcome, plan.Unnecessary)
+	}
+	if !strings.Contains(out.String(), "would hold 1 hosts against 2.0.6") {
+		t.Errorf("output = %q, want it to say what it would have checked", out.String())
+	}
+}
+
+// A cluster that is unwell is worth stopping a rehearsal for: it is the one
+// thing about the fleet a dry run can establish, and an upgrade should not be
+// started against it.
+func TestDryRunStopsOnAnUnhealthyCluster(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	survey := NewMockSurveyor(ctrl)
+	survey.EXPECT().
+		Health(gomock.Any()).
+		Return(plan.Cluster{
+			Healthy: false,
+			Members: []plan.Member{{Name: "server-a", Version: "2.0.5"}},
 		}, nil)
 
 	deps := &Deps{Survey: survey, Out: &bytes.Buffer{}, Mode: DryRun}
@@ -141,7 +180,7 @@ func TestDryRunCallsAStepThatOnlyReads(t *testing.T) {
 		Title:  "Confirm the fleet",
 		Action: plan.Action{Command: steps.CommandVerify, Args: map[string]any{"version": "2.0.6"}},
 	}
-	if _, err := Steps(deps)[steps.CommandVerify](context.Background(), task); err != nil {
-		t.Fatalf("verify: %v", err)
+	if _, err := Steps(deps)[steps.CommandVerify](context.Background(), task); err == nil {
+		t.Error("a dry run passed over an unhealthy cluster")
 	}
 }

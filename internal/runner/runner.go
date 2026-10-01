@@ -94,7 +94,16 @@ func (r *Runner) Apply(ctx context.Context) error {
 			// Said out loud. A run whose last task simply stops printing leaves
 			// the reader deciding for themselves whether it finished or died,
 			// and the one thing they came for is that it is done.
-			r.sayf("\nevery host is on %s %s\n", r.run.Spec.Tool, r.run.Spec.To)
+			//
+			// What it says is read off the record rather than assumed from
+			// reaching the end: a rehearsal, and a resumed run with nothing
+			// left to do, both finish having changed nothing, and claiming the
+			// fleet had moved would be the most misleading line in the tool.
+			if did := r.carriedOut(); did == 0 {
+				r.sayf("\nnothing was changed\n")
+			} else {
+				r.sayf("\nevery host is on %s %s\n", r.run.Spec.Tool, r.run.Spec.To)
+			}
 			return nil
 		}
 
@@ -212,6 +221,21 @@ func (r *Runner) find(id string) (*plan.Task, bool) {
 
 // sayf writes to the operator. Output that cannot be written is not worth
 // failing a run over.
+// carriedOut counts the tasks that actually did something.
+//
+// A task that settled unnecessary did not: the host was already at the target,
+// or the run was only rehearsing. Both leave the fleet as they found it, and
+// the difference is what the closing line turns on.
+func (r *Runner) carriedOut() int {
+	var n int
+	for _, task := range r.run.Tasks {
+		if r.run.Outcome(task.ID) == plan.Succeeded {
+			n++
+		}
+	}
+	return n
+}
+
 func (r *Runner) sayf(format string, args ...any) {
 	_, _ = fmt.Fprintf(r.out, format, args...)
 }
