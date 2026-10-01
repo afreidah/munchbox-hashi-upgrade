@@ -30,7 +30,7 @@ var surveyedAt = time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 func node(name string, active bool, version string, echo time.Time) api.HANode {
 	n := api.HANode{
 		Hostname:   name,
-		APIAddress: "https://" + name + ".munchbox.cc:8200",
+		APIAddress: "https://" + name + ".example.test:8200",
 		ActiveNode: active,
 		Version:    version,
 	}
@@ -67,14 +67,14 @@ func find(t *testing.T, cluster plan.Cluster, name string) plan.Member {
 // answering for themselves.
 func trio() (*api.HAStatusResponse, map[string]*api.HealthResponse) {
 	ha := &api.HAStatusResponse{Nodes: []api.HANode{
-		node("goren", false, "2.0.4", surveyedAt.Add(-2*time.Second)),
-		node("nomad-server-03", true, "2.0.4", time.Time{}),
-		node("stabler", false, "2.0.4", surveyedAt.Add(-3*time.Second)),
+		node("server-a", false, "2.0.4", surveyedAt.Add(-2*time.Second)),
+		node("server-c", true, "2.0.4", time.Time{}),
+		node("server-b", false, "2.0.4", surveyedAt.Add(-3*time.Second)),
 	}}
 	return ha, map[string]*api.HealthResponse{
-		"goren":           health("2.0.4", false, true),
-		"nomad-server-03": health("2.0.4", false, false),
-		"stabler":         health("2.0.4", false, true),
+		"server-a": health("2.0.4", false, true),
+		"server-c": health("2.0.4", false, false),
+		"server-b": health("2.0.4", false, true),
 	}
 }
 
@@ -108,12 +108,12 @@ func TestEveryNodeIsAServerAndNoneIsAVoter(t *testing.T) {
 func TestTheActiveNodeIsThePrimary(t *testing.T) {
 	cluster := surveyed(trio())
 
-	active := find(t, cluster, "nomad-server-03")
+	active := find(t, cluster, "server-c")
 	if !active.Primary || active.Status != statusActive {
 		t.Errorf("active node: primary = %v, status = %q", active.Primary, active.Status)
 	}
 
-	standby := find(t, cluster, "goren")
+	standby := find(t, cluster, "server-a")
 	if standby.Primary || standby.Status != statusStandby {
 		t.Errorf("standby: primary = %v, status = %q", standby.Primary, standby.Status)
 	}
@@ -124,7 +124,7 @@ func TestTheActiveNodeIsThePrimary(t *testing.T) {
 func TestTheApiUrlBecomesABareHost(t *testing.T) {
 	cluster := surveyed(trio())
 
-	if addr := find(t, cluster, "goren").Addr; addr != "goren.munchbox.cc" {
+	if addr := find(t, cluster, "server-a").Addr; addr != "server-a.example.test" {
 		t.Errorf("addr = %q, want the host out of the api url", addr)
 	}
 }
@@ -159,11 +159,11 @@ func TestToleranceIsDerivedFromTheServingNodes(t *testing.T) {
 // nothing -- and a gate that read it as healthy would move on too early.
 func TestASealedNodeIsNeitherHealthyNorServing(t *testing.T) {
 	ha, h := trio()
-	h["goren"] = health("2.0.4", true, true)
+	h["server-a"] = health("2.0.4", true, true)
 
 	cluster := assemble(ha, h, surveyedAt)
 
-	sealed := find(t, cluster, "goren")
+	sealed := find(t, cluster, "server-a")
 	if sealed.Status != statusSealed {
 		t.Errorf("status = %q, want %q", sealed.Status, statusSealed)
 	}
@@ -179,9 +179,9 @@ func TestASealedNodeIsNeitherHealthyNorServing(t *testing.T) {
 // closer than saying it is up.
 func TestAnUninitialisedNodeIsReadAsSealed(t *testing.T) {
 	ha, h := trio()
-	h["goren"] = &api.HealthResponse{Initialized: false, Version: "2.0.4"}
+	h["server-a"] = &api.HealthResponse{Initialized: false, Version: "2.0.4"}
 
-	if got := find(t, assemble(ha, h, surveyedAt), "goren").Status; got != statusSealed {
+	if got := find(t, assemble(ha, h, surveyedAt), "server-a").Status; got != statusSealed {
 		t.Errorf("status = %q, want %q", got, statusSealed)
 	}
 }
@@ -194,9 +194,9 @@ func TestAnUninitialisedNodeIsReadAsSealed(t *testing.T) {
 // node's record of when it last echoed. Recent means it is still in the set.
 func TestAStandbyWithNoAnswerFallsBackToItsEcho(t *testing.T) {
 	ha, h := trio()
-	delete(h, "goren")
+	delete(h, "server-a")
 
-	if got := find(t, assemble(ha, h, surveyedAt), "goren").Status; got != statusStandby {
+	if got := find(t, assemble(ha, h, surveyedAt), "server-a").Status; got != statusStandby {
 		t.Errorf("status = %q, want %q from a recent echo", got, statusStandby)
 	}
 }
@@ -205,10 +205,10 @@ func TestAStandbyWithNoAnswerFallsBackToItsEcho(t *testing.T) {
 // the same as a node that answered and said it was fine.
 func TestAStandbyThatStoppedEchoingIsOutOfTouch(t *testing.T) {
 	ha, h := trio()
-	delete(h, "stabler")
-	ha.Nodes[2] = node("stabler", false, "2.0.4", surveyedAt.Add(-2*echoGrace))
+	delete(h, "server-b")
+	ha.Nodes[2] = node("server-b", false, "2.0.4", surveyedAt.Add(-2*echoGrace))
 
-	lost := find(t, assemble(ha, h, surveyedAt), "stabler")
+	lost := find(t, assemble(ha, h, surveyedAt), "server-b")
 	if lost.Status != statusLost {
 		t.Errorf("status = %q, want %q", lost.Status, statusLost)
 	}
@@ -221,10 +221,10 @@ func TestAStandbyThatStoppedEchoingIsOutOfTouch(t *testing.T) {
 // to be fine.
 func TestAStandbyWithNoEchoAtAllIsOutOfTouch(t *testing.T) {
 	ha, h := trio()
-	delete(h, "stabler")
-	ha.Nodes[2] = node("stabler", false, "2.0.4", time.Time{})
+	delete(h, "server-b")
+	ha.Nodes[2] = node("server-b", false, "2.0.4", time.Time{})
 
-	if got := find(t, assemble(ha, h, surveyedAt), "stabler").Status; got != statusLost {
+	if got := find(t, assemble(ha, h, surveyedAt), "server-b").Status; got != statusLost {
 		t.Errorf("status = %q, want %q", got, statusLost)
 	}
 }
@@ -233,9 +233,9 @@ func TestAStandbyWithNoEchoAtAllIsOutOfTouch(t *testing.T) {
 // when a direct read of it fails.
 func TestTheActiveNodeIsActiveEvenWithNoDirectAnswer(t *testing.T) {
 	ha, h := trio()
-	delete(h, "nomad-server-03")
+	delete(h, "server-c")
 
-	if got := find(t, assemble(ha, h, surveyedAt), "nomad-server-03").Status; got != statusActive {
+	if got := find(t, assemble(ha, h, surveyedAt), "server-c").Status; got != statusActive {
 		t.Errorf("status = %q, want %q", got, statusActive)
 	}
 }
@@ -249,8 +249,8 @@ func TestTheActiveNodeIsActiveEvenWithNoDirectAnswer(t *testing.T) {
 // proceed into it.
 func TestACLusterWithNoActiveNodeIsNotHealthy(t *testing.T) {
 	ha, h := trio()
-	ha.Nodes[1] = node("nomad-server-03", false, "2.0.4", surveyedAt.Add(-time.Second))
-	h["nomad-server-03"] = health("2.0.4", false, true)
+	ha.Nodes[1] = node("server-c", false, "2.0.4", surveyedAt.Add(-time.Second))
+	h["server-c"] = health("2.0.4", false, true)
 
 	cluster := assemble(ha, h, surveyedAt)
 
@@ -271,9 +271,9 @@ func TestACLusterWithNoActiveNodeIsNotHealthy(t *testing.T) {
 // node's own answer has to win over the active node's record of it.
 func TestANodesOwnVersionWinsOverTheReportedOne(t *testing.T) {
 	ha, h := trio()
-	h["goren"] = health("2.1.1", false, true)
+	h["server-a"] = health("2.1.1", false, true)
 
-	if got := find(t, assemble(ha, h, surveyedAt), "goren").Version; got != "2.1.1" {
+	if got := find(t, assemble(ha, h, surveyedAt), "server-a").Version; got != "2.1.1" {
 		t.Errorf("version = %q, want the node's own answer", got)
 	}
 }
@@ -281,9 +281,9 @@ func TestANodesOwnVersionWinsOverTheReportedOne(t *testing.T) {
 // With no answer from the node there is nothing better to use.
 func TestTheReportedVersionIsUsedWhenANodeIsSilent(t *testing.T) {
 	ha, h := trio()
-	delete(h, "goren")
+	delete(h, "server-a")
 
-	if got := find(t, assemble(ha, h, surveyedAt), "goren").Version; got != "2.0.4" {
+	if got := find(t, assemble(ha, h, surveyedAt), "server-a").Version; got != "2.0.4" {
 		t.Errorf("version = %q, want the reported one", got)
 	}
 }
@@ -312,11 +312,11 @@ func TestANilStatusIsAnEmptyCluster(t *testing.T) {
 
 func TestHostOf(t *testing.T) {
 	for _, c := range []struct{ in, want string }{
-		{"https://192.168.68.58:8200", "192.168.68.58"},
-		{"http://goren:8200", "goren"},
-		{"https://goren.munchbox.cc", "goren.munchbox.cc"},
+		{"https://198.51.100.58:8200", "198.51.100.58"},
+		{"http://server-a:8200", "server-a"},
+		{"https://server-a.example.test", "server-a.example.test"},
 		// Not a URL at all: handed back rather than mangled into nothing.
-		{"192.168.68.58", "192.168.68.58"},
+		{"198.51.100.58", "198.51.100.58"},
 		{"", ""},
 	} {
 		if got := hostOf(c.in); got != c.want {

@@ -20,7 +20,7 @@
   <g class="t">
 
     <!-- Survey -->
-    <text x="40" y="36" class="micro">SURVEY -NOTHING IS COMMITTED YET</text>
+    <text x="40" y="36" class="micro">SURVEY: BEFORE ANY HOST IS TOUCHED</text>
     <rect x="40" y="56" width="250" height="86" rx="20" class="card"/>
     <rect x="360" y="56" width="250" height="86" rx="20" class="card"/>
     <path class="line" marker-end="url(#arrow)" d="M290 99H360"/>
@@ -36,7 +36,7 @@
     <text x="520" y="168" class="micro">POINT OF NO RETURN</text>
 
     <!-- Servers, then clients -->
-    <text x="40" y="226" class="micro">SERVERS -ONE AT A TIME, THE COORDINATOR LAST</text>
+    <text x="40" y="226" class="micro">SERVERS: ONE AT A TIME, COORDINATOR LAST</text>
     <text x="910" y="226" class="micro">THEN CLIENTS</text>
     <rect x="40" y="246" width="210" height="86" rx="20" class="card"/>
     <rect x="330" y="246" width="210" height="86" rx="20" class="card"/>
@@ -64,10 +64,10 @@
 
     <rect x="40" y="372" width="1080" height="68" rx="20" class="gatebox"/>
     <text x="580" y="402" text-anchor="middle" class="label">Read the cluster until it reports the host back</text>
-    <text x="580" y="426" text-anchor="middle" class="small">running the target version, healthy, and in service -- polled, never slept on; a timeout names the condition it gave up on</text>
+    <text x="580" y="426" text-anchor="middle" class="small">running the target version, healthy, and in service; a timeout reports the condition it gave up on</text>
 
     <!-- Verify -->
-    <text x="40" y="490" class="micro">VERIFY -IN THIS ORDER</text>
+    <text x="40" y="490" class="micro">VERIFY: IN THIS ORDER</text>
     <path class="line" marker-end="url(#arrow)" d="M580 440V468"/>
     <rect x="300" y="498" width="250" height="48" rx="16" class="card"/>
     <rect x="620" y="498" width="250" height="48" rx="16" class="card"/>

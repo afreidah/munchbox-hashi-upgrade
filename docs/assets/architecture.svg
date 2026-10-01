@@ -18,7 +18,7 @@
   <g class="t">
 
     <!-- Commands -->
-    <text x="40" y="36" class="micro">PLAN -CHANGES NOTHING</text>
+    <text x="40" y="36" class="micro">PLAN: READS ONLY</text>
     <rect x="40" y="56" width="200" height="86" rx="20" class="card"/>
     <rect x="400" y="56" width="280" height="86" rx="20" class="card"/>
     <path class="line" marker-end="url(#arrow)" d="M240 99H400"/>
@@ -35,7 +35,7 @@
     </g>
 
     <!-- Run -->
-    <text x="40" y="196" class="micro">RUN -THE FILE IS REWRITTEN AFTER EVERY TASK</text>
+    <text x="40" y="196" class="micro">RUN: THE FILE IS REWRITTEN AFTER EVERY TASK</text>
     <path class="line" marker-end="url(#arrow)" d="M540 142V180"/>
     <rect x="40" y="212" width="250" height="86" rx="20" class="card"/>
     <rect x="330" y="212" width="250" height="86" rx="20" class="card"/>
@@ -50,7 +50,7 @@
     </g>
 
     <!-- Clients -->
-    <text x="40" y="352" class="micro">CLIENTS -THE ONLY PLACE A TOOL IS NAMED</text>
+    <text x="40" y="352" class="micro">CLIENTS: ONE PER TOOL</text>
     <path class="line" marker-end="url(#arrow)" d="M830 298V336"/>
     <rect x="40" y="368" width="560" height="120" rx="20" class="card"/>
     <text x="320" y="398" text-anchor="middle" class="label">clients.For</text>

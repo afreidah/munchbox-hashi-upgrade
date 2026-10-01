@@ -81,11 +81,11 @@ func fleet() plan.Cluster {
 		Healthy:   true,
 		Tolerance: 1,
 		Members: []plan.Member{
-			server("nomad-server-03", true),
-			server("goren", false),
-			server("stabler", false),
+			server("server-c", true),
+			server("server-a", false),
+			server("server-b", false),
 			{
-				Name:     "nomad-client-01",
+				Name:     "client-a",
 				Kind:     plan.KindClient,
 				Version:  target,
 				Status:   "ready",
@@ -143,12 +143,12 @@ func TestAwait(t *testing.T) {
 	// read would fail every upgrade it exists to protect.
 	t.Run("waits out a host that is not back yet", func(t *testing.T) {
 		g := gate(t,
-			read{cluster: dent("goren", func(m *plan.Member) { m.Voter = false })},
-			read{cluster: dent("goren", func(m *plan.Member) { m.Version = "2.0.5" })},
+			read{cluster: dent("server-a", func(m *plan.Member) { m.Voter = false })},
+			read{cluster: dent("server-a", func(m *plan.Member) { m.Version = "2.0.5" })},
 			read{cluster: fleet()},
 		)
 
-		if err := g.Server(t.Context(), "goren", target); err != nil {
+		if err := g.Server(t.Context(), "server-a", target); err != nil {
 			t.Errorf("Server: %v", err)
 		}
 	})
@@ -172,7 +172,7 @@ func TestAwait(t *testing.T) {
 	t.Run("does not require a voter where nothing votes", func(t *testing.T) {
 		g := gate(t, read{cluster: unvoting()})
 
-		if err := g.Server(t.Context(), "goren", target); err != nil {
+		if err := g.Server(t.Context(), "server-a", target); err != nil {
 			t.Errorf("Server: %v", err)
 		}
 	})
@@ -180,9 +180,9 @@ func TestAwait(t *testing.T) {
 	// Where the cluster does vote, a host that has not rejoined its quorum is
 	// still not back, so the condition is not merely dropped.
 	t.Run("still requires a voter where the cluster votes", func(t *testing.T) {
-		g := gate(t, read{cluster: dent("goren", func(m *plan.Member) { m.Voter = false })})
+		g := gate(t, read{cluster: dent("server-a", func(m *plan.Member) { m.Voter = false })})
 
-		if err := g.Server(t.Context(), "goren", target); err == nil {
+		if err := g.Server(t.Context(), "server-a", target); err == nil {
 			t.Error("a non-voting host in a voting cluster passed the gate")
 		}
 	})
@@ -190,16 +190,16 @@ func TestAwait(t *testing.T) {
 	// A timeout that reports only its own duration sends the reader nowhere, so
 	// the last unmet condition travels with it.
 	t.Run("names the condition it gave up on", func(t *testing.T) {
-		g := gate(t, read{cluster: dent("goren", func(m *plan.Member) { m.Voter = false })})
+		g := gate(t, read{cluster: dent("server-a", func(m *plan.Member) { m.Voter = false })})
 
-		err := g.Server(t.Context(), "goren", target)
+		err := g.Server(t.Context(), "server-a", target)
 		if err == nil {
 			t.Fatal("expected a timeout")
 		}
 		if !errors.Is(err, context.DeadlineExceeded) {
 			t.Errorf("error %v, want a deadline", err)
 		}
-		for _, want := range []string{"goren", "not a voter", "rejoining the cluster"} {
+		for _, want := range []string{"server-a", "not a voter", "rejoining the cluster"} {
 			if !strings.Contains(err.Error(), want) {
 				t.Errorf("error %q does not mention %q", err, want)
 			}

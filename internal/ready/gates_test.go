@@ -33,7 +33,7 @@ func refuses(t *testing.T, err error, want string) {
 
 func TestServer(t *testing.T) {
 	t.Run("passes a host that rejoined at the target", func(t *testing.T) {
-		if err := gate(t, read{cluster: fleet()}).Server(t.Context(), "goren", target); err != nil {
+		if err := gate(t, read{cluster: fleet()}).Server(t.Context(), "server-a", target); err != nil {
 			t.Errorf("Server: %v", err)
 		}
 	})
@@ -42,9 +42,9 @@ func TestServer(t *testing.T) {
 	// read from the running agent rather than from the pin, so a host that has
 	// not restarted still reports the old one however healthy it looks.
 	t.Run("refuses a host that is still on the old version", func(t *testing.T) {
-		cluster := dent("goren", func(m *plan.Member) { m.Version = "2.0.5" })
+		cluster := dent("server-a", func(m *plan.Member) { m.Version = "2.0.5" })
 
-		err := gate(t, read{cluster: cluster}).Server(t.Context(), "goren", target)
+		err := gate(t, read{cluster: cluster}).Server(t.Context(), "server-a", target)
 		refuses(t, err, "running 2.0.5, not "+target)
 	})
 
@@ -53,24 +53,24 @@ func TestServer(t *testing.T) {
 	// before the restart. Asking about it would have the gate wait out its
 	// timeout on a host that had already arrived, which is what it did.
 	t.Run("passes a host whose health verdict predates the restart", func(t *testing.T) {
-		cluster := dent("goren", func(m *plan.Member) { m.StableSince = settled.Add(-time.Hour) })
+		cluster := dent("server-a", func(m *plan.Member) { m.StableSince = settled.Add(-time.Hour) })
 
-		if err := gate(t, read{cluster: cluster}).Server(t.Context(), "goren", target); err != nil {
+		if err := gate(t, read{cluster: cluster}).Server(t.Context(), "server-a", target); err != nil {
 			t.Errorf("Server: %v", err)
 		}
 	})
 
 	t.Run("refuses a host autopilot calls unhealthy", func(t *testing.T) {
-		cluster := dent("goren", func(m *plan.Member) { m.Healthy = false })
+		cluster := dent("server-a", func(m *plan.Member) { m.Healthy = false })
 
-		err := gate(t, read{cluster: cluster}).Server(t.Context(), "goren", target)
-		refuses(t, err, "goren is not healthy")
+		err := gate(t, read{cluster: cluster}).Server(t.Context(), "server-a", target)
+		refuses(t, err, "server-a is not healthy")
 	})
 
 	t.Run("refuses a host that rejoined as a non-voter", func(t *testing.T) {
-		cluster := dent("goren", func(m *plan.Member) { m.Voter = false })
+		cluster := dent("server-a", func(m *plan.Member) { m.Voter = false })
 
-		err := gate(t, read{cluster: cluster}).Server(t.Context(), "goren", target)
+		err := gate(t, read{cluster: cluster}).Server(t.Context(), "server-a", target)
 		refuses(t, err, "not a voter")
 	})
 
@@ -80,7 +80,7 @@ func TestServer(t *testing.T) {
 		cluster := fleet()
 		cluster.Tolerance = 0
 
-		err := gate(t, read{cluster: cluster}).Server(t.Context(), "goren", target)
+		err := gate(t, read{cluster: cluster}).Server(t.Context(), "server-a", target)
 		refuses(t, err, "failure tolerance is 0")
 	})
 
@@ -88,7 +88,7 @@ func TestServer(t *testing.T) {
 		cluster := fleet()
 		cluster.Healthy = false
 
-		err := gate(t, read{cluster: cluster}).Server(t.Context(), "goren", target)
+		err := gate(t, read{cluster: cluster}).Server(t.Context(), "server-a", target)
 		refuses(t, err, "the cluster is not healthy")
 	})
 
@@ -101,7 +101,7 @@ func TestServer(t *testing.T) {
 }
 
 func TestClient(t *testing.T) {
-	const client = "nomad-client-01"
+	const client = "client-a"
 
 	t.Run("passes a host back in service", func(t *testing.T) {
 		if err := gate(t, read{cluster: fleet()}).Client(t.Context(), client, target); err != nil {
@@ -160,15 +160,15 @@ func TestBarrier(t *testing.T) {
 	// Every server, not only the one just restarted: a host demoted earlier in
 	// the run is the case a per-host gate cannot see.
 	t.Run("refuses while any server is a non-voter", func(t *testing.T) {
-		cluster := dent("stabler", func(m *plan.Member) { m.Voter = false })
+		cluster := dent("server-b", func(m *plan.Member) { m.Voter = false })
 
-		refuses(t, gate(t, read{cluster: cluster}).Barrier(t.Context()), "stabler is not a voter")
+		refuses(t, gate(t, read{cluster: cluster}).Barrier(t.Context()), "server-b is not a voter")
 	})
 
 	// Clients are not part of the coordinating set, so one being out does not
 	// hold the barrier.
 	t.Run("ignores the hosts that do not coordinate", func(t *testing.T) {
-		cluster := dent("nomad-client-01", func(m *plan.Member) {
+		cluster := dent("client-a", func(m *plan.Member) {
 			m.Healthy = false
 			m.Eligible = false
 		})

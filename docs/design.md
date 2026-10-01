@@ -38,73 +38,67 @@ anything happens, and the thing that is reviewed is the thing that runs.
 
 ## Key decisions
 
-**Topology is discovered, never declared.** Each tool is surveyed through its
-own API. A host that holds two roles is recorded as a server, because it carries
-one binary and one service: counting it twice would restart one member twice and
-spend the cluster's fault tolerance twice for one host.
+**Topology.** Read from each tool's own API at plan time. A host holding two
+roles is recorded once, as a server: it carries one binary and one service, so
+recording it twice would restart one member twice and spend the cluster's fault
+tolerance twice for one host.
 
-**One client per tool, behind one interface.** A cluster answers three
-questions: what it is made of, how it is now, and move coordination off this
-host. `clients.For` is the single place a tool becomes a client; everything
-above it takes interfaces and never learns which it holds. Adding a tool is a
-package and a case, not a change to the runner, the steps or the gates.
+**Client selection.** A cluster answers three questions: what it is made of, how
+it is now, and move coordination off this host. `clients.For` maps a tool to the
+client that answers them. Code above that point takes interfaces, so a tool is
+added as a package and a case there.
 
-Capabilities not every tool has stay off that interface. Only Nomad places work,
-so a client that can drain says so by implementing `execute.Drainer` and is
-asked at the point it would be used. `Spec.Drain` is dropped at plan time for a
-tool that schedules nothing, rather than recorded and ignored.
+Capabilities that not every tool has stay off the shared interface. Nomad is the
+only one that places work, so a client able to drain implements
+`execute.Drainer` and is asked for it at the point of use. `Spec.Drain` is
+dropped at plan time for a tool that schedules nothing.
 
-**Cluster properties are read, not configured.** Whether coordination runs on a
-quorum of the fleet's own members is a property of how a cluster is deployed,
-not of which tool it is: Vault storing its data in Consul has no voters, and the
-same Vault on integrated raft storage does. `plan.Cluster.Votes` answers it from
-the members, so neither case is configured and a cluster migrated between them
-is read correctly without being told.
+**Voter detection.** Whether coordination runs on a quorum of the fleet's own
+members depends on deployment rather than tool: Vault storing its data in Consul
+has no voters, the same Vault on integrated raft storage does.
+`plan.Cluster.Votes` answers it from the members, so a cluster migrated between
+the two is read correctly without configuration.
 
-**The run file is the journal, not a script.** Task list and survey are written
-once and never change; outcomes accumulate against them in a separate record per
-task. Reading the file answers both what was intended and how far it got,
-without one obscuring the other.
+**The run file.** Task list and survey are written once; outcomes accumulate
+against them in a separate record per task. The file therefore answers both what
+was intended and how far it got.
 
-**Gates read the cluster, never the clock.** A host is not upgraded because its
-converge exited zero. It is upgraded when the cluster says it is back at the
-target version, healthy, and in service. Every wait polls the cluster's own
-verdict with a timeout, and a timeout reports the condition it gave up on rather
-than only its duration.
+**Gate conditions.** A converge exiting zero does not mean the host is back.
+Each gate polls the cluster until it reports the host at the target version,
+healthy and in service. A timeout reports the condition it gave up on alongside
+its duration.
 
 The default is ten minutes at five-second intervals. A converge installs a
 couple of hundred megabytes, restarts a service and rejoins a cluster; a gate
 that gives up inside that fails a run that was going to succeed, and leaves the
 operator to work out whether the host is wrong or merely unhurried.
 
-**A converge that ran and failed is a result, not an error.** The command
-reached the host and reported. Reading its exit status is what stops the run at
-the failure instead of at the next gate, waiting for a host nothing installed
-anything on.
+**Converge exit status.** `Converge` returns a non-zero exit as a result, since
+the command reached the host and reported. The caller reads it, which stops the
+run at the failure rather than at the following gate, waiting for a host that
+nothing installed anything on.
 
-**Confirmation is a property of the task, not a decision the runner makes.** The
-file records which boundaries need a person, so which ones they are can be
-reviewed in advance. Two strengths: a prompt for anything worth pausing on, and
-a typed confirmation for the two that cannot be waved through -- moving
+**Confirmation.** The file records which boundaries need a person, so they can
+be reviewed in advance. Two strengths: a prompt for anything worth pausing on,
+and a typed confirmation for the two that cannot be waved through -- moving
 coordination, and restarting the host that had it. Typed asks for the host's
 name back, or for the version on a task that names no host.
 
-**No automatic downgrade.** Reversing a raft member is not obviously safe, and a
-tool that tried would be making the worst decision at the worst time. A failed
-run stops and reports. Compensations unwind *orchestration* state in reverse --
-the converge timers, a drained host -- and never a version.
+**Downgrades.** Not performed. Reversing a raft member is not obviously safe,
+and the decision would land at the worst moment. A failed run stops and reports.
+Compensations unwind orchestration state in reverse -- the converge timers, a
+drained host. Versions are left where they are.
 
-**The pin is intent, not a reversible side effect.** It stands whatever becomes
-of the run. Converges are frozen throughout, so a pin nothing reads harms
-nothing, and rolling it back does harm twice over: a fleet half-converged onto
-the new version and aimed at the old one converges backwards the moment the
-timers return, and a resume skips the step as already done, so every host after
-it installs the old version and waits at a gate for a version no longer coming.
+**The version pin.** Set once and left set, whatever becomes of the run.
+Converges are frozen throughout, so nothing reads the pin until the run ends.
+Rolling it back costs twice: a fleet half-converged onto the new version and
+aimed at the old one converges backwards once the timers return, and a resume
+skips the step as already done, so every host after it installs the old version
+and waits at a gate for a version that is no longer coming.
 
-**Steps know nothing about order.** The runner owns sequence, persistence and
-what a failure costs. A step is handed one task and reports what it did. The two
-are joined by a table mapping each command to its implementation, which is the
-one place a new command is wired up.
+**Step boundaries.** The runner owns sequence, persistence and what a failure
+costs. A step is handed one task and reports what it did. A table maps each
+command to its implementation, and is the one place a new command is wired up.
 
 ## The sequence
 

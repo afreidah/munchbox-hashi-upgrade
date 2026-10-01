@@ -35,10 +35,10 @@ func tasks() []plan.Task {
 			Confirm: plan.ConfirmNone,
 		},
 		{
-			ID:      "upgrade-goren",
-			Title:   "Upgrade goren",
+			ID:      "upgrade-server-a",
+			Title:   "Upgrade server-a",
 			Stage:   plan.StageServers,
-			Member:  "goren",
+			Member:  "server-a",
 			Action:  plan.Action{Command: "upgrade-member"},
 			Confirm: plan.ConfirmNone,
 		},
@@ -158,7 +158,7 @@ func TestApply(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Open: %v", err)
 		}
-		for _, id := range []string{"freeze", "upgrade-goren", "handoff"} {
+		for _, id := range []string{"freeze", "upgrade-server-a", "handoff"} {
 			if got := reopened.Outcome(id); got != plan.Succeeded {
 				t.Errorf("%s = %s on disk, want %s", id, got, plan.Succeeded)
 			}
@@ -182,8 +182,8 @@ func TestApply(t *testing.T) {
 		if err := runner.Apply(t.Context()); err != nil {
 			t.Fatalf("Apply: %v", err)
 		}
-		if got := r.Outcome("upgrade-goren"); got != plan.Unnecessary {
-			t.Errorf("upgrade-goren = %s, want %s", got, plan.Unnecessary)
+		if got := r.Outcome("upgrade-server-a"); got != plan.Unnecessary {
+			t.Errorf("upgrade-server-a = %s, want %s", got, plan.Unnecessary)
 		}
 	})
 
@@ -195,8 +195,8 @@ func TestApply(t *testing.T) {
 		if !errors.Is(err, ErrNoStep) {
 			t.Fatalf("Apply error = %v, want %v", err, ErrNoStep)
 		}
-		if got := r.Outcome("upgrade-goren"); got != plan.Waiting {
-			t.Errorf("upgrade-goren = %s, want it untouched", got)
+		if got := r.Outcome("upgrade-server-a"); got != plan.Waiting {
+			t.Errorf("upgrade-server-a = %s, want it untouched", got)
 		}
 	})
 

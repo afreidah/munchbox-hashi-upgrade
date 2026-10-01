@@ -311,11 +311,11 @@ func TestAFailedStepDownIsReported(t *testing.T) {
 
 // The address is what messages use to say which cluster they mean.
 func TestAddressIsWhatTheClientWasBuiltWith(t *testing.T) {
-	client, err := vault.New(vault.Options{Address: "https://vault.munchbox.cc:8200"})
+	client, err := vault.New(vault.Options{Address: "https://vault.example.test:8200"})
 	if err != nil {
 		t.Fatalf("new: %v", err)
 	}
-	if got := client.Address(); got != "https://vault.munchbox.cc:8200" {
+	if got := client.Address(); got != "https://vault.example.test:8200" {
 		t.Errorf("address = %q", got)
 	}
 }
