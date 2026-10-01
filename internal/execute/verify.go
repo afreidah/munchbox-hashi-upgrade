@@ -16,7 +16,9 @@ package execute
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 
@@ -40,6 +42,15 @@ func verify(deps *Deps) runner.Step {
 			return runner.Result{}, err
 		}
 
+		// A rehearsal asks a different question. The fleet has not been upgraded,
+		// so holding it against the target would fail every time and make the
+		// one mode meant to build confidence end in red. What a dry run can
+		// establish is that the cluster reads and is well, which is the whole
+		// of what this step needs from it when the run reaches here for real.
+		if deps.Mode == DryRun {
+			return rehearse(deps.Out, cluster, want)
+		}
+
 		if behind := laggards(cluster, want); len(behind) > 0 {
 			return runner.Result{}, fmt.Errorf(
 				"not on %s: %s", want, strings.Join(behind, ", "))
@@ -54,6 +65,24 @@ func verify(deps *Deps) runner.Step {
 
 		return runner.Result{}, nil
 	}
+}
+
+// rehearse is what verification amounts to in a dry run: the cluster answered
+// and is well, and here is what would have been held against the target.
+//
+// Settles unnecessary rather than succeeded, because the fleet has not been
+// verified -- only its readability has.
+func rehearse(out io.Writer, cluster plan.Cluster, want string) (runner.Result, error) {
+	if !cluster.Healthy {
+		return runner.Result{}, errors.New("the cluster is not healthy")
+	}
+
+	if out != nil {
+		_, _ = fmt.Fprintf(out, "  would hold %d hosts against %s; the cluster reads healthy\n",
+			len(cluster.Members), want)
+	}
+
+	return runner.Result{Outcome: plan.Unnecessary}, nil
 }
 
 // laggards names the members not reporting want, sorted so the same fleet

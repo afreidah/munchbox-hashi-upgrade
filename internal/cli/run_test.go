@@ -87,7 +87,12 @@ func execRun(t *testing.T, args ...string) (string, error) {
 	root.SetIn(strings.NewReader(""))
 	root.SetArgs(append([]string{"run"}, args...))
 
-	return out.String(), func() error { _, err := root.ExecuteC(); return err }()
+	// Run before reading. Both results are operands of one return statement and
+	// are evaluated left to right, so taking the string first captured the
+	// buffer before anything had been written to it.
+	_, err := root.ExecuteC()
+
+	return out.String(), err
 }
 
 // -------------------------------------------------------------------------
@@ -148,6 +153,22 @@ func TestNoOpWorksThroughTheFileAndRecordsProgress(t *testing.T) {
 		if got := run.Outcome(task.ID); got != plan.Unnecessary {
 			t.Errorf("%s outcome = %q, want %q", task.ID, got, plan.Unnecessary)
 		}
+	}
+}
+
+// A rehearsal changes nothing, so it must not close by claiming the fleet
+// moved. The same holds for a resumed run with nothing left to do.
+func TestARunThatChangedNothingSaysSo(t *testing.T) {
+	out, err := execRun(t, "--no-op", written(t, runFile))
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if !strings.Contains(out, "nothing was changed") {
+		t.Errorf("output = %q, want it to say nothing was changed", out)
+	}
+	if strings.Contains(out, "every host is on") {
+		t.Errorf("a rehearsal claimed the fleet had moved:\n%s", out)
 	}
 }
 
