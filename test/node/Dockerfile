@@ -19,12 +19,13 @@
 # restart it without the container exiting.
 # -------------------------------------------------------------------------------
 
+ARG TOOL=nomad
 ARG FROM_VERSION=2.0.5
 
 # The official image carries no package manager -- no /etc/os-release and no
 # apk -- so the binary is lifted out of it onto a base that can install an ssh
 # server. The version under test is still the one that image ships.
-FROM hashicorp/nomad:${FROM_VERSION} AS nomad
+FROM hashicorp/${TOOL}:${FROM_VERSION} AS tool
 
 # Debian rather than Alpine: the released binary is linked against glibc, and on
 # musl it fails as "not found" -- the loader is missing, not the file.
@@ -40,7 +41,15 @@ RUN apt-get update \
       openssh-server curl unzip jq procps ca-certificates iproute2 \
  && rm -rf /var/lib/apt/lists/*
 
-COPY --from=nomad /bin/nomad /bin/nomad
+ARG TOOL
+COPY --from=tool /bin/${TOOL} /bin/${TOOL}
+
+# What this node runs, recorded in a file rather than the environment.
+#
+# ENV reaches the container's main process, but cinc-client is run over ssh and
+# sshd builds a session environment of its own that carries none of it. A file
+# is read the same way however the command arrives.
+RUN echo "${TOOL}" > /etc/hashi-tool
 
 # The host key every node presents, and the certificate the tool verifies it by.
 # One key across the fleet: these are containers on a private network, and the

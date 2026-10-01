@@ -71,12 +71,20 @@ func upgrade(deps *Deps) runner.Step {
 		// say which one it came from and several in a row otherwise read as
 		// one host repeating itself.
 		out := withPrefix(deps.Out, name)
-		_, err = deps.Fleet.Converge(ctx, target, out)
+		res, err := deps.Fleet.Converge(ctx, target, out)
 		if flusher, ok := out.(interface{ Flush() error }); ok {
 			_ = flusher.Flush()
 		}
 		if err != nil {
 			return runner.Result{}, err
+		}
+
+		// A converge that ran and failed is a result, not an error -- the
+		// command reached the host and reported. Reading it is what makes the
+		// difference between a run that stops on the failure and one that
+		// walks into a gate waiting for a host nothing installed anything on.
+		if !res.OK() {
+			return runner.Result{}, fmt.Errorf("converge on %s exited %d", name, res.Code)
 		}
 
 		// Before the gate, not after: the client gate requires the host to be

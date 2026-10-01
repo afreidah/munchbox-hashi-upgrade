@@ -14,6 +14,7 @@ package execute
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"go.uber.org/mock/gomock"
@@ -152,6 +153,31 @@ func TestADrainedHostIsPutBackByTheCompensation(t *testing.T) {
 // -------------------------------------------------------------------------
 // FAILURES
 // -------------------------------------------------------------------------
+
+// A converge that ran and failed is reported as a result rather than an error.
+// Reading it is what stops the run here instead of at a gate waiting for a
+// host that nothing installed anything on.
+func TestUpgradeStopsOnAConvergeThatFailed(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	fleet := NewMockFleeter(ctrl)
+	fleet.EXPECT().
+		Converge(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(ssh.Result{Code: 1}, nil)
+
+	// No expectations on the waiter: reaching the gate is the bug.
+	deps := live(&Deps{
+		Run: run(), Fleet: fleet, Wait: NewMockWaiter(ctrl), Target: targets,
+	})
+
+	_, err := upgrade(deps)(context.Background(), upgradeTask("server-a"))
+	if err == nil {
+		t.Fatal("a failed converge was treated as success")
+	}
+	if !strings.Contains(err.Error(), "exited 1") {
+		t.Errorf("err = %v, want it to report the exit status", err)
+	}
+}
 
 // A drain that cannot finish stops the run before the host is restarted, so a
 // host that would not shed its work is not restarted anyway.

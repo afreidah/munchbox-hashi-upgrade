@@ -12,7 +12,11 @@
 
 package plan
 
-import "time"
+import (
+	"cmp"
+	"slices"
+	"time"
+)
 
 // Schema is the run file format version. Open refuses anything else: a run is
 // resumed by a later invocation, possibly a later build, and reinterpreting
@@ -41,6 +45,13 @@ func (t Tool) Known() bool {
 		return false
 	}
 }
+
+// Schedules reports whether t places work on its hosts.
+//
+// Only Nomad does. The others run an agent per host and carry nothing that
+// could be moved off one, so draining has no meaning for them: a run against
+// one neither plans a drain nor is given anything to drain with.
+func (t Tool) Schedules() bool { return t == Nomad }
 
 // Spec is what the run carries out.
 //
@@ -129,6 +140,25 @@ type Cluster struct {
 	Tolerance  int
 	Healthy    bool `yaml:",omitempty"`
 	Members    []Member
+}
+
+// Sort puts servers ahead of clients and orders each group by name, so one
+// cluster always surveys to the same snapshot and two surveys can be compared.
+//
+// Presentation only: the order a run touches hosts in is derived from what
+// they carry, not from this. Shared because every client package that builds a
+// snapshot wants the same answer, and two of them sorting differently would
+// make two clusters incomparable for no reason.
+func (c Cluster) Sort() {
+	slices.SortStableFunc(c.Members, func(a, b Member) int {
+		if a.Kind != b.Kind {
+			if a.Kind == KindServer {
+				return -1
+			}
+			return 1
+		}
+		return cmp.Compare(a.Name, b.Name)
+	})
 }
 
 // OfKind returns the members of one kind, in survey order.
