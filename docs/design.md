@@ -2,103 +2,113 @@
 
 ## Context
 
-Upgrading Nomad, Consul or Vault across a fleet is a sequence with rules.
-Servers tolerate running ahead of clients and never the reverse. Only one
-server may be down at a time, and only while the rest can still coordinate. The
-host that coordinates should give that up deliberately rather than by
-vanishing. None of that is hard; all of it is easy to get wrong at two in the
-morning, and a half-finished upgrade is worse than either end of it.
+Upgrading Nomad, Consul or Vault across a cluster has ordering constraints:
 
-The fleet installs its binaries through configuration management: a version pin
-in a `versions` data bag, and a converge on each host that installs whatever the
-pin says. An upgrade is therefore not "push a binary" -- it is "move the pin,
-then converge the hosts in the right order, checking the cluster between each".
+- Servers can run a newer version than clients. Clients cannot run a newer
+  version than servers.
+- Only one server can be down at a time, and only while the remaining servers
+  maintain quorum.
+- The leader should transfer leadership explicitly before it is restarted,
+  rather than triggering an election by going down.
 
-This tool is that sequence, written down and driven.
+These rules are simple but easy to get wrong when done by hand, and a partly
+completed upgrade is harder to recover from than either the old or new state.
 
-## What it is
+Binaries are installed by configuration management. A version pin is stored in
+a `versions` data bag, and a converge on each host installs the pinned version.
+An upgrade therefore consists of: update the pin, converge hosts in the correct
+order, and check cluster health between hosts.
 
-Three commands.
+This tool automates that procedure.
 
-`plan` reads the cluster and writes a run file. It changes nothing: no pin, no
-timer, no host. Everything that alters anything is a task *in* the file it
-produces.
+## Commands
 
-`run` carries out a run file, recording the outcome of every task back into it.
-It resumes, so a run that stopped is continued by naming the same file.
+`plan` queries the cluster and writes a run file. It makes no changes: it does
+not touch the pin, timers or hosts. Every change is a task in the generated
+file.
 
-`status` reads a run file and reports it. No cluster, no credentials, no change:
-a run that stopped in the night is read before deciding what to do about it, and
-reading it should not require the ability to act on it.
+`run` executes a run file and records each task's result in it. Running the
+same file again resumes from where it stopped.
 
-The separation is the point. A plan can be read, questioned and kept before
-anything happens, and the thing that is reviewed is the thing that runs.
+`status` reads a run file and prints its state. It needs no cluster access or
+credentials and makes no changes, so an operator can inspect a stopped run
+without having permissions to modify the cluster.
+
+Because planning and execution are separate, the run file can be reviewed and
+kept before anything changes, and the reviewed file is exactly what executes.
 
 ![The plan command surveys a cluster and writes a run file. The run command drives that file: the runner owns order and persistence, a table maps each task's command to a step, and steps reach the fleet through six interfaces. One client per tool answers the cluster questions, chosen by clients.For; a configuration-server client moves the pin and the timers; an ssh client runs the converge on each host. The status command reads the file and nothing else.](assets/architecture.svg)
 
 ## Key decisions
 
-**Topology.** Read from each tool's own API at plan time. A host holding two
-roles is recorded once, as a server: it carries one binary and one service, so
-recording it twice would restart one member twice and spend the cluster's fault
-tolerance twice for one host.
+**Topology.** Read from each tool's API at plan time. A host that is both server
+and client is recorded once, as a server. It runs one binary and one service,
+so recording it under both roles would restart it twice and reduce the
+cluster's fault tolerance twice for the same host.
 
-**Client selection.** A cluster answers three questions: what it is made of, how
-it is now, and move coordination off this host. `clients.For` maps a tool to the
-client that answers them. Code above that point takes interfaces, so a tool is
-added as a package and a case there.
+**Client selection.** Each tool's client implements three operations: list
+members, report current state, and transfer leadership away from a host.
+`clients.For` returns the client for a tool. Code above that layer uses
+interfaces, so adding a tool means adding a package and a case in
+`clients.For`.
 
-Capabilities that not every tool has stay off the shared interface. Nomad is the
-only one that places work, so a client able to drain implements
-`execute.Drainer` and is asked for it at the point of use. `Spec.Drain` is
-dropped at plan time for a tool that schedules nothing.
+Operations that only some tools support are not on the shared interface. Only
+Nomad schedules workloads, so a client that supports draining implements
+`execute.Drainer`, and callers type-assert for it where needed. `Spec.Drain` is
+removed at plan time for tools that do not schedule workloads.
 
-**Voter detection.** Whether coordination runs on a quorum of the fleet's own
-members depends on deployment rather than tool: Vault storing its data in Consul
-has no voters, the same Vault on integrated raft storage does.
-`plan.Cluster.Votes` answers it from the members, so a cluster migrated between
-the two is read correctly without configuration.
+**Voter detection.** Whether a cluster's members vote in a raft quorum depends
+on the deployment, not the tool. Vault with Consul storage has no voters; Vault
+with integrated raft storage does. `plan.Cluster.Votes` determines this from
+the member list, so a cluster that changes storage backend is handled without
+configuration.
 
-**The run file.** Task list and survey are written once; outcomes accumulate
-against them in a separate record per task. The file therefore answers both what
-was intended and how far it got.
+**The run file.** The task list and survey results are written once. Each task
+has a separate result record that is updated as the run proceeds. The file
+records both the planned tasks and how far execution got.
 
-**Gate conditions.** A converge exiting zero does not mean the host is back.
-Each gate polls the cluster until it reports the host at the target version,
-healthy and in service. A timeout reports the condition it gave up on alongside
-its duration.
+**Gate conditions.** A converge exiting zero does not mean the host has
+rejoined. Each gate polls the cluster until it reports the host at the target
+version, healthy and in service. On timeout, the error includes the unmet
+condition and the timeout duration.
 
-The default is ten minutes at five-second intervals. A converge installs a
-couple of hundred megabytes, restarts a service and rejoins a cluster; a gate
-that gives up inside that fails a run that was going to succeed, and leaves the
-operator to work out whether the host is wrong or merely unhurried.
+The default timeout is ten minutes, polling every five seconds. A converge
+downloads a few hundred megabytes, restarts a service and rejoins a cluster. A
+shorter timeout fails runs that would have succeeded and leaves the operator
+unsure whether the host is broken or just slow.
 
-**Converge exit status.** `Converge` returns a non-zero exit as a result, since
-the command reached the host and reported. The caller reads it, which stops the
-run at the failure rather than at the following gate, waiting for a host that
-nothing installed anything on.
+**Converge exit status.** `Converge` returns a non-zero exit code as a result,
+not an error, because the command did run on the host. The caller checks the
+exit code and stops the run at the failed converge, instead of proceeding to
+the gate and waiting on a host where nothing was installed.
 
-**Confirmation.** The file records which boundaries need a person, so they can
-be reviewed in advance. Two strengths: a prompt for anything worth pausing on,
-and a typed confirmation for the two that cannot be waved through -- moving
-coordination, and restarting the host that had it. Typed asks for the host's
-name back, or for the version on a task that names no host.
+**Confirmation.** The run file records which tasks require operator
+confirmation, so they can be reviewed ahead of time. There are two levels:
 
-**Downgrades.** Not performed. Reversing a raft member is not obviously safe,
-and the decision would land at the worst moment. A failed run stops and reports.
-Compensations unwind orchestration state in reverse -- the converge timers, a
-drained host. Versions are left where they are.
+- A yes/no prompt, for tasks that warrant a pause.
+- A typed confirmation, for leadership transfer and for restarting the former
+  leader. The operator must type the host name, or the version if the task has
+  no host.
 
-**The version pin.** Set once and left set, whatever becomes of the run.
-Converges are frozen throughout, so nothing reads the pin until the run ends.
-Rolling it back costs twice: a fleet half-converged onto the new version and
-aimed at the old one converges backwards once the timers return, and a resume
-skips the step as already done, so every host after it installs the old version
-and waits at a gate for a version that is no longer coming.
+**Downgrades.** Not supported. Downgrading a raft member is not reliably safe,
+and the decision would come at the worst time. A failed run stops and reports
+the failure. Compensations undo orchestration changes in reverse order
+(converge timers, drained hosts). Installed versions are not changed.
 
-**Step boundaries.** The runner owns sequence, persistence and what a failure
-costs. A step is handed one task and reports what it did. A table maps each
-command to its implementation, and is the one place a new command is wired up.
+**The version pin.** Set once and never reverted, regardless of the run's
+outcome. Converge timers are stopped for the whole run, so nothing reads the pin
+until the run ends. Reverting it causes two problems:
+
+- Hosts already upgraded would converge back to the old version once the
+  timers restart.
+- On resume, the pin step is recorded as succeeded and is skipped, so every
+  remaining host installs the old version and its gate waits for a version that
+  will never be installed.
+
+**Step boundaries.** The runner handles ordering, persistence and failure
+handling. A step receives one task and returns its result. A table maps each
+command to its implementation; this table is the only place a new command needs
+to be registered.
 
 ## The sequence
 
@@ -118,31 +128,30 @@ verify    verify-cluster          read the fleet back against the target
 
 ![Four stages. Survey stops the scheduled converges and then moves the version pin. The server stage upgrades each non-coordinating host in turn, hands coordination off, then upgrades the host that had it. The client stage upgrades each host that carries work. Verify reads the fleet back and only then releases the converges. Every host is followed by a gate that polls the cluster until it reports the host back at the target version, healthy and in service.](assets/sequence.svg)
 
-Why in that order:
+Reasons for this order:
 
-- The timers stop **before** the pin moves. A scheduled converge landing between
-  the two would install the new version on a host the run has not reached, out
-  of order and unobserved.
-- The pin moves **once, centrally**, before any host is touched, so hosts differ
-  only in when they are converged and never in what they converge toward.
-- The coordinating host goes **last**, so the cluster spends most of the server
-  stage with settled coordination.
-- The handoff is a **separate task** so it can be confirmed, retried and read on
-  its own. The destination is chosen when the task runs, from a cluster just
-  read, rather than from a survey taken before anything was touched.
-- Verification runs **before** the timers come back. The per-host gates each
-  proved one host returned, which is not the same as the fleet having arrived: a
-  host the survey missed, or one whose converge was a no-op because the pin never
-  reached it, passes every gate and still runs the old binary.
+- Timers are stopped **before** the pin changes. Otherwise a scheduled converge
+  between the two steps could upgrade a host out of order and without a gate.
+- The pin is changed **once**, before any host is upgraded. All hosts converge
+  to the same target; they differ only in when they are converged.
+- The leader is upgraded **last**, so leadership stays stable for most of the
+  server stage.
+- Leadership transfer is a **separate task** so it can be confirmed, retried
+  and inspected on its own. The target is selected when the task runs, from
+  current cluster state, not from the survey taken at plan time.
+- Cluster verification runs **before** timers are restarted. Per-host gates
+  only confirm the hosts in the run file. A host missing from the survey, or
+  one whose converge did not pick up the new pin, would pass every gate and
+  still run the old version.
 
-The first task that changes the cluster in a way the run cannot walk away from
-is marked irreversible. Before it, abandoning costs nothing. After it, the fleet
-is part-upgraded and finishing is the safe direction.
+The first task that makes a change the run cannot back out of is marked
+irreversible. Before that task, stopping the run is harmless. After it, the
+cluster is partly upgraded and completing the run is the safer option.
 
-## What each tool does differently
+## Per-tool differences
 
-The sequence above is the same for all three. These are the differences, and all
-of them live in one client each.
+The sequence is the same for all three tools. The differences below are all
+contained in the tool's client package.
 
 | | Nomad | Consul | Vault |
 |---|---|---|---|
@@ -155,90 +164,87 @@ of them live in one client each.
 | handoff destination | required | optional | not accepted |
 | schedules work | yes | no | no |
 
-**Nomad.** Two reads, reconciled on advertise address because the server and
-client views disagree about name shape and do not both list every host. An
-unhealthy cluster is reported as HTTP 429 carrying the health reply, and the API
-client treats every non-2xx as an error and discards the body, so the reply is
-recovered from the error rather than taken from the response.
+**Nomad.** Servers and clients are read from two endpoints and matched by
+advertise address, because the two endpoints format names differently and
+neither lists every host. Nomad reports an unhealthy cluster as HTTP 429 with
+the health response in the body. The Nomad API client treats any non-2xx as an
+error and discards the body, so the health response is parsed out of the error.
 
-**Consul.** Autopilot describes the servers; the gossip pool describes every
-agent, servers included, so a host already recorded as a server is not recorded
-again as an agent. A member's version comes out of its `build` tag, which
-carries the revision alongside it. Consul's client decodes the 429 itself.
+**Consul.** Autopilot lists the servers. The gossip pool lists all agents,
+including servers, so hosts already recorded as servers are skipped. A member's
+version is parsed from its `build` tag, which also contains the git revision.
+The Consul API client handles the 429 response itself.
 
-**Vault.** Two reads. `sys/ha-status` lists the HA set from the active node's
-view. Then each node is asked about itself at its own API address, because a node
-restarting into a seal is in the HA set and serving nothing, and only that node
-knows -- a sealed node is recorded as unhealthy with a status that says so,
-which the existing gate reports instead of a bare version mismatch. A node that
-will not answer is recorded from the active node's view rather than failing the
-read, since a cluster with one host down is a state a run is often called for.
+**Vault.** Two reads. `sys/ha-status` returns the HA members as seen by the
+active node. Each node is then queried directly at its own API address, because
+a node that restarted sealed still appears in the HA set but serves no
+requests, and only the node itself reports that. A sealed node is recorded as
+unhealthy with a sealed status, which the gate reports instead of a generic
+version mismatch. If a node does not respond, it is recorded using the active
+node's view instead of failing the read, since upgrading a cluster with one
+host down is a common case.
 
-Vault with Consul storage holds no raft state of its own, so nothing votes and
-nothing reports a failure tolerance. Tolerance is derived: a cluster serves while
-one node is unsealed and one is active, so what it can afford to lose is every
-serving node but one. The two places that required a voter -- the server gate,
-and choosing the host coordination is handed to -- ask `Cluster.Votes` first.
+Vault with Consul storage has no raft state, so it has no voters and reports no
+failure tolerance. Tolerance is calculated instead: the cluster serves requests
+while at least one node is unsealed and active, so it can lose all but one
+serving node. The two places that previously required a voter (the server
+gate, and selecting the leadership transfer target) check `Cluster.Votes` first.
 
-A step-down names no successor, so the one the step picked is accepted and
-ignored and the gate confirms coordination moved. Restarting a node seals it;
-whether it returns unsealed is the seal's business, and a cluster without
-automatic unsealing cannot be rolled unattended.
+Vault step-down does not accept a target node. The target chosen by the step
+is accepted and ignored, and the gate confirms that leadership moved.
+Restarting a node seals it. Unsealing depends on the seal configuration; a
+cluster without auto-unseal cannot be upgraded unattended.
 
 ## Run modes
 
-| mode | what happens |
+| mode | behavior |
 |---|---|
-| live | every task is carried out |
-| `--dry-run` | the read-only tasks run for real; the rest print what they would do |
-| `--no-op` | nothing is reached at all; every task prints and settles |
+| live | all tasks execute |
+| `--dry-run` | read-only tasks execute; other tasks print what they would do |
+| `--no-op` | no connections are made; every task prints and completes |
 
-A dry run proves the cluster answers. A no-op proves the file parses and shows
-the sequence. Neither claims success: a task that only printed settles as
-*unnecessary*, so a rehearsal advances through the file without the record
-saying work was done. A rehearsal also does not write the file, so it cannot
-consume the run a live pass is about to make.
+A dry run verifies that the cluster is reachable. A no-op verifies that the file
+parses and shows the task sequence. Neither marks tasks as succeeded: a task
+that only printed is recorded as *unnecessary*. Neither mode writes the run
+file, so a rehearsal does not affect a subsequent live run.
 
-A no-op builds no clients, and a dry run builds only the cluster client, since
-demanding ssh and configuration-server credentials for a rehearsal that will not
-use them would put it behind a wall of flags.
+A no-op creates no clients. A dry run creates only the cluster client, so it
+does not require ssh or configuration-server credentials it will not use.
 
 ## Outcomes
 
 | outcome | meaning |
 |---|---|
-| waiting | not reached |
-| active | started and never reported back |
-| succeeded | done |
-| unnecessary | did not need doing -- a host already at the target |
-| failed | reported an error |
+| waiting | not started |
+| active | started, no result recorded |
+| succeeded | completed |
+| unnecessary | no action needed, e.g. host already at target version |
+| failed | returned an error |
 
 ![Each task settles as succeeded or unnecessary, or does not settle at all. A resumed run starts at the first task that has not settled. Failed means the task reported an error; active means it started and never reported back, which is what an interrupt leaves behind. The status command says which task and why, and run with the reset flag forgets that task's record so the run reaches it again once an operator has looked at the host.](assets/resume.svg)
 
-`active` is what an interrupt leaves behind: whether the task took effect is
-unknown, so a resumed run lands on it rather than retrying blind. `failed` is
-deliberately not settled either -- a resumed run stops on the failure instead of
-stepping over it.
+`active` is the state left by an interrupt. Whether the task's change was
+applied is unknown, so a resumed run stops on it rather than retrying
+automatically. `failed` also blocks resume; the run does not skip past a
+failure.
 
-Both want an operator looking at the host first. `status` says which task and
-why; `run --reset <task-id>` then forgets that task's record so the run reaches
-it again. Naming it is the point: the run will not decide for itself that a
-half-done converge is safe to repeat, and the operator saying so explicitly is
-the difference between a retry and a guess.
+Both states require an operator to check the host first. `status` shows the
+task and the error. `run --reset <task-id>` clears that task's result so the
+run executes it again. The reset is explicit by design: the tool does not
+assume a partly completed converge is safe to repeat; the operator decides.
 
 ## Confirmation and interruption
 
-A gated task is put to the operator before it runs. Declining is not a failure:
-the operator has decided to stop, so the run unwinds its compensations and
-reports where it got to. End of input counts as declining -- a run driven from a
-pipe reaches a prompt it cannot ask, and treating silence as assent would let it
-walk through a typed confirmation.
+Tasks that require confirmation prompt the operator before running. Declining
+is not treated as a failure: the run executes its compensations and reports its
+progress. End of input (EOF) is treated as declining, so a run reading from a
+pipe cannot pass a typed confirmation by accident.
 
-`--yes` assents to everything. That is for a run already reviewed and restarted,
-not for the first pass over one.
+`--yes` accepts all prompts. It is intended for resuming a run that has already
+been reviewed, not for a first run.
 
-Interrupts are checked between tasks rather than mid-task, so a run stops at a
-boundary the file can describe.
+Interrupts are checked between tasks, not during a task, so the run always
+stops at a point the run file can represent.
 
 ## Prerequisites
 
@@ -247,128 +253,127 @@ boundary the file can describe.
   state. Consul: read autopilot health, list members, read agent config,
   transfer raft leadership. Vault: read `sys/ha-status`, and `update` on
   `sys/step-down`.
-- **A configuration server** holding the `versions` data bag, reachable with an
-  identity whose key signs requests. Behind an internal CA, `--cinc-ca` takes
-  the PEM file or directory to trust.
-- **ssh to every host**, with a certificate-verified host key: the tool takes a
-  host CA and will not accept a bare host key. A host presenting an unsigned key
-  is refused at the first task that dials it.
-- **`cinc-client` and `cinc-client.timer` on each host**, since freezing,
-  converging and thawing are what the tool drives.
-- **Automatic unsealing**, for Vault only. A restart seals the node.
+- **A configuration server** with the `versions` data bag, and a client
+  identity whose key signs requests. For an internal CA, `--cinc-ca` takes the
+  PEM file or directory to trust.
+- **ssh access to every host** with CA-signed host keys. The tool requires a
+  host CA and rejects unsigned host keys; a host with an unsigned key fails at
+  the first task that connects to it.
+- **`cinc-client` and `cinc-client.timer` on each host**, used to stop, run and
+  restart converges.
+- **Auto-unseal**, for Vault only. Restarting a node seals it.
 
 ## Testing
 
-Three tiers, each for what only it can prove.
+Three test tiers, each covering what the others cannot.
 
-**Unit.** No Docker. The configuration server is `cinc-server-ng` embedded as a
-library, so pins are written and read back through the real Chef API with real
-Mixlib signature verification -- a round trip, rather than a table of expected
-requests that would pass even if nothing landed. Clients are taken as
-consumer-side interfaces with generated mocks, so ordering, compensations and
-failure paths are exercised without a cluster. Each client package is also
-driven against an HTTP stand-in, which is what proves the endpoints, the
-per-node addressing and the error wrapping are as issued.
+**Unit.** No Docker required. The configuration server is `cinc-server-ng`
+embedded as a library, so pins are written and read back through the Chef API
+with Mixlib signature verification. This tests a full round trip rather than
+only checking request contents. Clients are consumer-side interfaces with
+generated mocks, so ordering, compensations and failure paths are tested without
+a cluster. Each client package is also tested against an HTTP test server to
+verify endpoints, per-node addressing and error wrapping.
 
-**Integration.** Behind the `integration` build tag, containers via
-testcontainers. Some questions are properties of a cluster and nothing else
-settles them: whether a drain has finished, whether the endpoints read are the
-ones served, whether a dual-role host reconciles to one member. Nomad only.
+**Integration.** Uses the `integration` build tag and testcontainers. Covers
+behavior that only a real cluster exhibits: drain completion, whether the
+endpoints read match the endpoints served, and whether a dual-role host
+reconciles to one member. Nomad only.
 
-**A fleet to drive by hand.** One compose environment per tool, each a separate
-project on its own configuration-server port. Three servers and two clients for
-Nomad and Consul; three servers for Vault, plus the Consul it stores in and a
-second Vault standing in for a cloud KMS. Every fleet starts behind the version
-to plan toward, since a fleet already at the target plans a run whose every task
-is a no-op.
+**Local clusters for manual testing.** One Docker Compose project per tool,
+each on its own configuration-server port. Nomad and Consul run three servers
+and two clients. Vault runs three servers, plus a Consul cluster for storage
+and a second Vault instance for transit auto-unseal in place of a cloud KMS.
+Each cluster starts one version behind the target, because a cluster already
+at the target produces a run where every task is a no-op.
 
-One node image serves all three: a build argument picks which binary is lifted
-out of the official image, and the tool's name is written to a file rather than
-the environment, because a converge arrives over ssh and an ssh session carries
-nothing the image set.
+All three use the same node image. A build argument selects which binary to
+copy from the official image. The tool name is written to a file rather than
+an environment variable, because converges run over ssh and ssh sessions do
+not inherit the image's environment.
 
-### Faults found by driving it
+### Bugs found outside unit tests
 
-Listed because they are the argument for the cost of the last two tiers. None
-could have been found by a unit test, and three reached production.
+These justify the cost of the integration and local-cluster tiers. None could
+have been caught by unit tests, and three reached production.
 
-Found by a local fleet:
+Found with local clusters:
 
-- An unhealthy cluster was unreachable. Autopilot reports one as HTTP 429
-  carrying the health reply, and the API client discards the body of every
-  non-2xx -- so `Cluster.Healthy` could only ever be true, and every gate
-  reading it was checking nothing.
-- The server gate waited on a stability timestamp that does not move. An agent
-  that goes down and returns inside one health interval is never observed
-  unhealthy, so the gate could not pass on a host that had already arrived. The
-  version proves the restart on its own, read from the running agent rather than
-  from the pin.
-- A failed converge was taken as success. `Converge` returns a non-zero exit as a
-  result rather than an error, and the caller discarded it, so the run walked
-  into a gate waiting for a host nothing had installed anything on and then
-  blamed the version.
-- A voter was required of a host in a cluster where nothing votes. Two sites: the
-  server gate, which would have held every Vault host until it timed out, and
-  choosing a successor, which fails later and worse -- after two servers are
-  upgraded and past the point of no return.
+- Unhealthy clusters were never detected. Autopilot reports an unhealthy
+  cluster as HTTP 429 with the health response in the body, and the API client
+  discards the body of every non-2xx response. `Cluster.Healthy` always
+  returned true, so gates using it checked nothing.
+- The server gate waited on a stability timestamp that did not change. An agent
+  that restarts within one health-check interval is never seen as unhealthy, so
+  the gate never passed for a host that had already rejoined. The gate now uses
+  the version reported by the running agent, not the pin, as evidence of the
+  restart.
+- A failed converge was treated as success. `Converge` returns a non-zero exit
+  as a result rather than an error, and the caller ignored it. The run then
+  waited at a gate for a host where nothing was installed, and reported a
+  version mismatch.
+- A voter was required in clusters with no voters. This affected two places:
+  the server gate, which would have held every Vault host until timeout, and
+  leadership transfer target selection, which would fail later, after two
+  servers were upgraded and the run was past the irreversible point.
 
 Found in production:
 
-- A rehearsal consumed the run file, so the live pass that followed did nothing
-  and reported success. Three tests had encoded that behaviour.
-- Freezing refused outright when a converge was already in flight, which left
-  nothing to do but wait and retry by hand. It now waits for the converge and
+- A rehearsal wrote the run file, so the following live run found every task
+  already complete, did nothing, and reported success. Three tests asserted
+  the incorrect behavior.
+- Stopping converges failed immediately if a converge was already running,
+  requiring a manual wait and retry. It now waits for the running converge and
   reports what it is waiting on.
-- The pin was rolled back by a failed run, and a resume could not put it back,
-  because the step was recorded as succeeded. Three hosts converged onto the
-  version the fleet was being upgraded away from.
-- Gates gave up after three minutes, inside what a converge plus a restart plus
-  a rejoin takes on a slow host.
+- A failed run reverted the pin, and resuming did not restore it because the
+  pin step was recorded as succeeded. Three hosts converged to the old version.
+- Gates timed out after three minutes, which is shorter than a converge,
+  restart and rejoin take on a slow host.
 
 ## Out of scope
 
 - **Downgrades.** See above.
-- **Cookbook correctness.** The tool moves a pin and runs a converge. What the
-  converge installs is the cookbook's business.
-- **Scheduling.** A run is started by a person. There is no daemon and no cron.
-- **Agents that are not fleet members.** Vault's `vault-agent` installs from apt
-  on hosts across the fleet, independent of the pin. A run neither drives it nor
-  reports on it.
+- **Cookbook correctness.** The tool sets a pin and runs a converge. What the
+  converge installs is the cookbook's responsibility.
+- **Scheduling.** Runs are started manually. There is no daemon or cron job.
+- **Agents that are not cluster members.** Vault's `vault-agent` is installed
+  from apt on other hosts and does not use the pin. Runs do not upgrade or
+  report on it.
 
 ## Open items
 
-- The cluster barrier -- healthy, every server in service, tolerance to lose
-  another -- is written and tested but no step calls it. The per-host gates
-  cover what a step did to the host it touched; the barrier is what it did to
-  the cluster.
-- The integration tier covers Nomad only. Consul and Vault are covered by unit
-  tests against an HTTP stand-in and by a fleet driven by hand, which leaves the
-  handoff and the coordination gate without an automated test against a real
-  election.
-- Draining a client before restarting it is implemented and off by default,
-  since restarting an agent does not stop its allocations. It has never been
-  driven across a production fleet.
-- A survey that finds a single server still emits a handoff task, which cannot
-  succeed. That is deliberate -- planning around it would hide a degraded
-  cluster from the operator -- but the condition surfaces mid-run rather than at
-  review.
-- `scripts/preflight.sh` authenticates as the invoking user's default ssh
-  identity and takes no key, so it cannot check a fleet reachable only with
-  credentials of its own.
+- The cluster barrier (cluster healthy, all servers in service, enough
+  tolerance to lose another server) is implemented and tested but not called by
+  any step. Per-host gates check the host a step changed; the barrier would
+  check the whole cluster.
+- Integration tests cover Nomad only. Consul and Vault are covered by unit
+  tests against an HTTP test server and by manual local-cluster runs, so
+  leadership transfer and the leader gate have no automated test against a
+  real election.
+- Draining a client before restarting it is implemented but disabled by
+  default, because restarting a Nomad agent does not stop its allocations. It
+  has not been used on a production cluster.
+- If the survey finds only one server, the plan still includes a leadership
+  transfer task, which will fail. This is intentional, so that a degraded
+  cluster is not hidden from the operator, but the failure happens during the
+  run instead of at review time.
+- `scripts/preflight.sh` uses the current user's default ssh identity and does
+  not accept a key, so it cannot check hosts that require different
+  credentials.
 
 ## Safety summary
 
-- Nothing is changed by `plan`, and nothing by `status`.
-- The timers are stopped before the pin moves, and released only after the fleet
-  has been verified.
-- One host at a time. Servers before clients. The coordinating host last.
-- Every wait is on the cluster's own verdict, with a timeout that names the
-  condition it gave up on.
-- A converge that reports failure stops the run where it failed.
-- The file is written after every task, so an interrupted run is resumed rather
-  than restarted, and a task that failed is not stepped over without a person
-  naming it.
-- A failure stops the run and unwinds orchestration state in reverse. Versions
-  are never reversed, and neither is the pin.
-- A task whose command has no implementation is refused by name rather than
-  stepped over, so a run cannot report success over work it skipped.
+- `plan` and `status` make no changes.
+- Converge timers are stopped before the pin changes, and restarted only after
+  the cluster is verified.
+- One host at a time. Servers before clients. Leader last.
+- Every wait polls cluster state, with a timeout that reports the unmet
+  condition.
+- A failed converge stops the run at that host.
+- The run file is written after every task, so an interrupted run resumes
+  rather than restarts, and a failed task is not retried until an operator
+  resets it.
+- On failure, the run stops and undoes orchestration changes in reverse order.
+  Versions and the pin are never reverted.
+- A task with no registered implementation fails with its command name instead
+  of being skipped, so a run cannot report success for work it did not do.
