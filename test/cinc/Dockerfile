@@ -14,7 +14,7 @@
 
 ARG CINC_SERVER_VERSION=v0.14.0
 
-FROM golang:1.27-alpine AS build
+FROM golang:1.27.4-alpine AS build
 ARG CINC_SERVER_VERSION
 RUN apk add --no-cache git
 RUN GOBIN=/out go install \
