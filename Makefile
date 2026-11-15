@@ -18,7 +18,7 @@ BINDIR ?= $(PREFIX)/bin
 GO_LDFLAGS := -s -w -X github.com/afreidah/munchbox-hashi-upgrade/internal/cli.Version=$(VERSION)
 
 # Keep in sync with the version pinned in .github/workflows/ci.yml.
-GOLANGCI_VERSION ?= v2.13.0
+GOLANGCI_VERSION ?= v2.14.0
 GOLANGCI := go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION)
 
 # Mock packages hold no tests, so each adds a 0.0% row to the report and drags
